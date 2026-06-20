@@ -33,7 +33,8 @@ def obtener_apps():
     conexion.row_factory = sqlite3.Row
     cursor = conexion.cursor()
     cursor.execute('SELECT * FROM aplicaciones')
-    apps = [dict(fila) for fila in filas := cursor.fetchall()]
+    filas = cursor.fetchall() # Separamos la lectura en una línea normal
+    apps = [dict(fila) for fila in filas]
     conexion.close()
     return jsonify(apps)
 
