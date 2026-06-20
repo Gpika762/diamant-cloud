@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Diamant Cloud - Servidor Oficial</title>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; background-color: #0b0c10; color: #fff; margin: 0; padding: 30px; }
+        .container { max-width: 700px; margin: 0 auto; }
+        h1 { color: #0a6ef2; font-weight: 800; margin-bottom: 5px; }
+        .sub { color: #6c737f; margin-bottom: 30px; }
+        .card { background: #16171d; padding: 20px; border-radius: 18px; border: 1px solid #23252f; margin-bottom: 15px; }
+        .badge { background: #0a6ef2; padding: 4px 8px; border-radius: 8px; font-size: 11px; font-weight: bold; }
+        .title { font-size: 18px; font-weight: 700; margin: 8px 0 2px 0; }
+        .v { color: #00ca71; font-size: 12px; margin-bottom: 10px; }
+        .btn { display: inline-block; background: #242731; color: #fff; text-decoration: none; padding: 8px 16px; border-radius: 10px; font-size: 13px; font-weight: 600; margin-top: 10px; }
+        .btn:hover { background: #0a6ef2; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Diamant Cloud ☁️</h1>
+        <p class="sub">Servidor real en producción para Diamant OS Core</p>
+        {% for app in aplicaciones %}
+        <div class="card">
+            <span class="badge">{{ app.categoria }}</span>
+            <div class="title">{{ app.nombre }}</div>
+            <div class="v">v{{ app.version }}</div>
+            <p style="color:#9da4b0; font-size:14px; margin:0;">{{ app.descripcion }}</p>
+            <a href="{{ app.url_descarga }}" class="btn">📥 Descargar Ejecutable</a>
+        </div>
+        {% endfor %}
+    </div>
+</body>
+</html>
