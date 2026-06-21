@@ -2,6 +2,7 @@ import os
 import sqlite3
 import json
 import requests  # Necesario para llamar a la API de OpenRouter y Supabase
+import io        # 🌟 NUEVO: Requerido para enviar archivos binarios en memoria a Supabase
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session
 from supabase import create_client, Client
 
@@ -10,7 +11,6 @@ app = Flask(__name__)
 app.secret_key = "diamant_secret_key_os_cloud_123"
 
 DB_PATH = 'diamant_cloud.db'
-
 
 OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
 
@@ -203,22 +203,26 @@ def subir_app():
         try:
             # 1. Crear el nombre del archivo plano .cs
             nombre_archivo_cs = f"{nombre.lower().replace(' ', '_')}.cs"
-            archivo_bytes = codigo.encode('utf-8')
+            
+            # 🌟 CORRECCIÓN: Creamos un flujo binario en memoria compatible con Supabase
+            archivo_bytes = io.BytesIO(codigo.encode('utf-8'))
             
             # 2. Subir el archivo de texto directo a Supabase Storage
             bucket_name = "apps"
+            
+            # 🌟 CORRECCIÓN: "upsert": True (Booleano nativo, no texto) para poder sobreescribir sin rebotes
             supabase.storage.from_(bucket_name).upload(
                 path=nombre_archivo_cs,
-                file=archivo_bytes,
-                file_options={"content-type": "text/plain; charset=utf-8", "upsert": "true"}
+                file=archivo_bytes.getvalue(),
+                file_options={"content-type": "text/plain; charset=utf-8", "upsert": True}
             )
             
-            # 3. Extraer el enlace estático que no se borra jamás
+            # 3. Extraer el enlace estático público
             url_descarga_final = supabase.storage.from_(bucket_name).get_public_url(nombre_archivo_cs)
             
         except Exception as storage_err:
             print(f"Error subiendo a Supabase Storage: {storage_err}")
-            # Fallback en caso de que el bucket falle: guardamos vacío para no romper la BD local
+            # Fallback en caso de que el bucket falle
             url_descarga_final = "error_storage"
 
         # 4. Guardar metadatos e incluir la URL permanente en SQLite
@@ -258,6 +262,7 @@ def eliminar_app(app_id):
     conexion.close()
     return redirect(url_for('pagina_web'))
 
+# 🌟 CORRECCIÓN DE ARRANQUE: Configuración limpia para el puerto de Render en producción
 if __name__ == '__main__':
     inicializar_base_datos()
     puerto = int(os.environ.get("PORT", 5000))
