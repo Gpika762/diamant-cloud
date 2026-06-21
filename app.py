@@ -205,31 +205,33 @@ def subir_app():
         pasa_la_ia = True  # Rollback preventivo por red
 
     # 💾 GUARDA EL ARCHIVO EN CLOUDINARY SI PASÓ LAS PRUEBAS
+# 💾 GUARDA EL ARCHIVO EN CLOUDINARY SI PASÓ LAS PRUEBAS
     if pasa_la_ia and nombre and version and codigo:
         url_descarga_final = ""
         try:
             nombre_archivo_cs = f"{nombre.lower().replace(' ', '_')}.cs"
             
-            # Convertimos el string de código C# en bytes de memoria limpios
-            archivo_bytes = io.BytesIO(codigo.encode('utf-8')).getvalue()
+            # 🌟 CORRECCIÓN: Cloudinary raw necesita un string o un archivo real. 
+            # Si le pasamos los bytes puros a veces rebota si no detecta el buffer.
+            # Vamos a pasarle el string de código directamente como un archivo de texto en memoria simulado:
+            archivo_simulado = io.BytesIO(codigo.encode('utf-8'))
             
-            # 🌟 NUEVO: Subida directa a Cloudinary sin rebotes usando 'raw'
             resultado = cloudinary.uploader.upload(
-                archivo_bytes,
+                archivo_simulado,
                 folder="diamant_store_uploads",
                 resource_type="raw",
                 public_id=nombre_archivo_cs,
                 overwrite=True
             )
             
-            # Extraemos la url segura que nos da Cloudinary
             url_descarga_final = resultado['secure_url']
             
         except Exception as storage_err:
-            print(f"Error subiendo a Cloudinary Storage: {storage_err}")
-            url_descarga_final = "error_storage"
+            # 🌟 ESTO IMPRIMIRÁ EL ERROR REAL EN RENDER PARA VER QUÉ SE QUEJA CLOUDINARY
+            print(f"--- ERROR CRÍTICO CLOUDINARY ---: {storage_err}")
+            url_descarga_final = f"error: {str(storage_err)}"
 
-        # 4. Guardar metadatos e incluir la URL permanente en SQLite
+        # 4. Guardar metadatos en SQLite
         conexion = sqlite3.connect(DB_PATH)
         cursor = conexion.cursor()
         cursor.execute('''
