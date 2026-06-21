@@ -12,6 +12,7 @@
             --primary: #0a6ef2;
             --primary-hover: #0056c6;
             --success: #00ca71;
+            --danger: #ff3b30;
             --text-main: #ffffff;
             --text-muted: #7c8491;
             --border: #23252f;
@@ -37,7 +38,7 @@
         }
 
         .nav-container {
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 0 auto;
             display: flex;
             justify-content: space-between;
@@ -56,6 +57,12 @@
         .logo span {
             color: var(--text-main);
             font-weight: 400;
+        }
+
+        .nav-right {
+            display: flex;
+            align-items: center;
+            gap: 20px;
         }
 
         .nav-tabs {
@@ -85,9 +92,29 @@
             background-color: rgba(10, 110, 242, 0.15);
         }
 
+        .user-badge {
+            font-size: 13px;
+            color: var(--success);
+            font-weight: 600;
+            background: rgba(0, 202, 113, 0.1);
+            padding: 6px 12px;
+            border-radius: 20px;
+        }
+
+        .logout-link {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 13px;
+            transition: color 0.2s;
+        }
+
+        .logout-link:hover {
+            color: var(--danger);
+        }
+
         /* 📦 CONTENEDOR PRINCIPAL */
         .main-container {
-            max-width: 1000px;
+            max-width: 1200px;
             margin: 40px auto;
             padding: 0 20px;
         }
@@ -139,7 +166,6 @@
             margin-bottom: 15px;
         }
 
-        /* Icono de App Generada Dinámicamente */
         .app-icon {
             width: 55px;
             height: 55px;
@@ -194,7 +220,13 @@
             flex-grow: 1;
         }
 
+        .card-actions {
+            display: flex;
+            gap: 10px;
+        }
+
         .download-btn {
+            flex-grow: 1;
             background-color: var(--bg-input);
             color: var(--text-main);
             text-decoration: none;
@@ -212,14 +244,37 @@
             box-shadow: 0 4px 12px rgba(10, 110, 242, 0.3);
         }
 
-        /* 📤 SECCIÓN CONSOLA PROGRAMADOR */
-        .dev-section {
+        .btn-delete {
+            background-color: rgba(255, 59, 48, 0.1);
+            color: var(--danger);
+            text-decoration: none;
+            padding: 10px 14px;
+            border-radius: 12px;
+            font-size: 13.5px;
+            font-weight: bold;
+            text-align: center;
+            transition: all 0.2s;
+        }
+
+        .btn-delete:hover {
+            background-color: var(--danger);
+            color: white;
+        }
+
+        /* 🖥️ SECCIÓN IDE PROGRAMADOR EN LA NUBE */
+        .ide-container {
+            display: grid;
+            grid-template-columns: 320px 1fr;
+            gap: 30px;
             background-color: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: 24px;
-            padding: 35px;
-            max-width: 550px;
-            margin: 0 auto;
+            padding: 30px;
+        }
+
+        .ide-sidebar {
+            border-right: 1px solid var(--border);
+            padding-right: 20px;
         }
 
         .form-group {
@@ -253,8 +308,18 @@
             border-color: var(--primary);
         }
 
-        textarea {
-            resize: vertical;
+        /* Editor Terminal Code Style */
+        .code-editor {
+            font-family: 'Consolas', 'Courier New', monospace;
+            background-color: #050508;
+            color: #00ff66;
+            border: 1px solid #1a1a24;
+            padding: 20px;
+            border-radius: 14px;
+            height: 480px;
+            resize: none;
+            font-size: 14px;
+            line-height: 1.6;
         }
 
         .submit-btn {
@@ -273,6 +338,32 @@
 
         .submit-btn:hover {
             background-color: var(--primary-hover);
+        }
+
+        /* Caja de Autenticación */
+        .auth-box {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 35px;
+            border-radius: 24px;
+            max-width: 400px;
+            margin: 50px auto;
+            text-align: center;
+        }
+
+        .auth-btn-register {
+            background: none;
+            border: none;
+            color: var(--primary);
+            cursor: pointer;
+            font-size: 13.5px;
+            font-weight: 600;
+            margin-top: 15px;
+            transition: color 0.2s;
+        }
+
+        .auth-btn-register:hover {
+            color: #539eff;
         }
 
         .hidden {
@@ -294,9 +385,15 @@
     <nav>
         <div class="nav-container">
             <div class="logo">Diamant <span>Cloud Store</span></div>
-            <div class="nav-tabs">
-                <button class="tab-btn active" onclick="switchTab('tienda')">🛍️ Explorar Tienda</button>
-                <button class="tab-btn" onclick="switchTab('developer')">🛠️ Consola de Desarrollador</button>
+            <div class="nav-right">
+                <div class="nav-tabs">
+                    <button class="tab-btn active" onclick="switchTab('tienda')">🛍️ Explorar Tienda</button>
+                    <button class="tab-btn" onclick="switchTab('developer')">🛠️ Consola de Desarrollador</button>
+                </div>
+                {% if usuario %}
+                    <span class="user-badge">👨‍💻 {{ usuario }}</span>
+                    <a href="/logout" class="logout-link">Cerrar Sesión</a>
+                {% endif %}
             </div>
         </div>
     </nav>
@@ -321,11 +418,17 @@
                                     <span class="badge">{{ app.categoria }}</span>
                                     <span class="version">v{{ app.version }}</span>
                                 </div>
+                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">Autor: {{ app.autor }}</div>
                             </div>
                         </div>
                         <p class="app-desc">{{ app.descripcion }}</p>
                     </div>
-                    <a href="{{ app.url_descarga }}" class="download-btn" target="_blank">📥 Descargar Ejecutable</a>
+                    <div class="card-actions">
+                        <button class="download-btn" style="opacity: 0.6; cursor: not-allowed;" disabled>✓ Disponible en Teléfono</button>
+                        {% if usuario == app.autor %}
+                            <a href="/eliminar/{{ app.id }}" class="btn-delete" title="Eliminar Software">🗑️</a>
+                        {% endif %}
+                    </div>
                 </div>
                 {% else %}
                 <div class="empty-state">
@@ -337,45 +440,87 @@
         </div>
 
         <div id="view-developer" class="hidden">
-            <div class="header-section" style="text-align: center;">
-                <h1>Consola de Ingeniero Diamant ID</h1>
-                <p class="sub">Publica tus proyectos de forma inmediata sin depender de emuladores locales.</p>
-            </div>
+            
+            {% if not usuario %}
+                <div class="auth-box">
+                    <h2 style="margin-top: 0; font-size: 24px;">ID de Ingeniero Diamant</h2>
+                    <p style="color: var(--text-muted); font-size: 14px; margin-bottom: 25px;">Accede a tu cuenta para escribir líneas de código directo en el servidor.</p>
+                    <form action="/login" method="POST">
+                        <div class="form-group">
+                            <input type="text" name="username" placeholder="Nombre de Usuario" required>
+                        </div>
+                        <div class="form-group">
+                            <input type="password" name="password" placeholder="Contraseña de Seguridad" required>
+                        </div>
+                        <button type="submit" name="accion" value="login" class="submit-btn">🔐 Ingresar al Sistema</button>
+                        <button type="submit" name="accion" value="registro" class="auth-btn-register">Crear un nuevo perfil de Programador</button>
+                    </form>
+                </div>
+            {% else %}
+                <div class="header-section" style="text-align: center;">
+                    <h1>Consola de Ingeniero Diamant ID</h1>
+                    <p class="sub">Escribe tus algoritmos y compila de forma directa en el almacenamiento global.</p>
+                </div>
 
-            <div class="dev-section">
-                <form action="/subir" method="POST">
-                    <div class="form-group">
-                        <label>Nombre del Software</label>
-                        <input type="text" name="nombre" placeholder="Ej: Rat Football League" required>
+                <div class="ide-container">
+                    <div class="ide-sidebar">
+                        <form action="/subir" method="POST">
+                            <div class="form-group">
+                                <label>Nombre del Software</label>
+                                <input type="text" name="nombre" placeholder="Ej: Rat_Football" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Versión del Paquete</label>
+                                <input type="text" name="version" value="1.0.0" required>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Categoría</label>
+                                <select name="categoria">
+                                    <option value="Juegos">🎮 Juegos</option>
+                                    <option value="Sistema">⚙️ Sistema / Kernel</option>
+                                    <option value="Herramientas">🧮 Herramientas</option>
+                                </select>
+                            </div>
+
+                            <div class="form-group">
+                                <label>Descripción de Funciones</label>
+                                <textarea name="descripcion" placeholder="Explica el propósito de este módulo..." rows="3" required></textarea>
+                            </div>
+
+                            <button type="submit" class="submit-btn">🚀 Compilar y Publicar</button>
                     </div>
 
-                    <div class="form-group">
-                        <label>Versión del Paquete</label>
-                        <input type="text" name="version" placeholder="Ej: 4.1.0" required>
-                    </div>
+                    <div style="display: flex; flex-direction: column;">
+                        <label>Editor de Código Fuente C# (Diamant System Compliant)</label>
+                        <textarea name="codigo_fuente" class="code-editor" required>using System;
+using System.Windows.Forms;
+using System.Drawing;
 
-                    <div class="form-group">
-                        <label>Categoría</label>
-                        <select name="categoria">
-                            <option value="Juegos">🎮 Juegos</option>
-                            <option value="Sistema">⚙️ Sistema / Kernel</option>
-                            <option value="Herramientas">🧮 Herramientas</option>
-                        </select>
+namespace DiamantApps
+{
+    public class MiModuloCloud : UserControl
+    {
+        public MiModuloCloud()
+        {
+            this.BackColor = Color.FromArgb(20, 20, 30);
+            
+            Label titulo = new Label();
+            titulo.Text = "Diamant OS Cloud Run";
+            titulo.ForeColor = Color.Chartreuse;
+            titulo.Font = new Font("Segoe UI", 14, FontStyle.Bold);
+            titulo.Location = new Point(25, 40);
+            titulo.AutoSize = true;
+            
+            this.Controls.Add(titulo);
+        }
+    }
+}</textarea>
                     </div>
-
-                    <div class="form-group">
-                        <label>Descripción de Funciones</label>
-                        <textarea name="descripcion" placeholder="Explica de qué trata este programa..." rows="3" required></textarea>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Enlace de Descarga Directa (.EXE)</label>
-                        <input type="url" name="url_descarga" placeholder="https://raw.githubusercontent.com/.../juego.exe" required>
-                    </div>
-
-                    <button type="submit" class="submit-btn">🚀 Publicar e Instalar Globalmente</button>
-                </form>
-            </div>
+                    </form>
+                </div>
+            {% endif %}
         </div>
 
     </div>
@@ -384,7 +529,11 @@
         function switchTab(viewName) {
             // Manejo de botones activos
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
+            
+            // Usamos un validador seguro para capturar el click del tab
+            if(event && event.target) {
+                event.target.classList.add('active');
+            }
 
             // Alternar visibilidad de las capas
             if (viewName === 'tienda') {
