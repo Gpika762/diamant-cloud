@@ -138,7 +138,7 @@ def subir_app():
             "Content-Type": "application/json"
         }
         cuerpo_peticion = {
-            "model": "google/gemini-2.5-flash",
+            "model": "google/gemini-2.5-flash-lite",
             "messages": [{"role": "user", "content": prompt_ia}]
         }
         
