@@ -13,6 +13,7 @@
             --primary-hover: #0056c6;
             --success: #00ca71;
             --danger: #ff3b30;
+            --danger-glow: rgba(255, 59, 48, 0.2);
             --text-main: #ffffff;
             --text-muted: #7c8491;
             --border: #23252f;
@@ -52,6 +53,7 @@
             display: flex;
             align-items: center;
             gap: 8px;
+            letter-spacing: -0.3px;
         }
 
         .logo span {
@@ -152,12 +154,13 @@
             flex-direction: column;
             justify-content: space-between;
             position: relative;
-            transition: transform 0.2s, border-color 0.2s;
+            transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
         }
 
         .app-card:hover {
             transform: translateY(-2px);
             border-color: #313543;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
         }
 
         .card-top {
@@ -332,12 +335,13 @@
             font-size: 15px;
             font-weight: 700;
             cursor: pointer;
-            transition: background-color 0.2s;
+            transition: background-color 0.2s, box-shadow 0.2s;
             margin-top: 10px;
         }
 
         .submit-btn:hover {
             background-color: var(--primary-hover);
+            box-shadow: 0 4px 15px rgba(10, 110, 242, 0.4);
         }
 
         /* Caja de Autenticación */
@@ -378,9 +382,122 @@
             border: 2px dashed var(--border);
             border-radius: 20px;
         }
+
+        /* 🚨 MODAL DE COMPILACIÓN CYBERPUNK INTEGRADO */
+        .cyber-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(5, 5, 8, 0.85);
+            backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+
+        .cyber-modal-overlay.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .cyber-modal {
+            background-color: #120505;
+            border: 2px solid var(--danger);
+            box-shadow: 0 0 30px var(--danger-glow);
+            border-radius: 20px;
+            width: 90%;
+            max-width: 600px;
+            padding: 30px;
+            position: relative;
+            transform: scale(0.9);
+            transition: transform 0.3s ease;
+        }
+
+        .cyber-modal-overlay.active .cyber-modal {
+            transform: scale(1);
+        }
+
+        .cyber-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: var(--danger);
+            font-size: 20px;
+            font-weight: 800;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .cyber-alert-icon {
+            font-size: 24px;
+            animation: blink 1s infinite alternate;
+        }
+
+        .cyber-body-text {
+            color: #e5e7eb;
+            font-size: 14px;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .cyber-console {
+            font-family: 'Consolas', 'Courier New', monospace;
+            background-color: #000000;
+            border-left: 4px solid var(--danger);
+            color: #ffb3b3;
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 13.5px;
+            line-height: 1.6;
+            overflow-x: auto;
+            max-height: 200px;
+            white-space: pre-wrap;
+            margin-bottom: 25px;
+        }
+
+        .cyber-btn {
+            background-color: var(--danger);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            font-size: 14px;
+            font-weight: 700;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            float: right;
+        }
+
+        .cyber-btn:hover {
+            background-color: #b3241b;
+        }
+
+        @keyframes blink {
+            0% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
+
+    <div id="errorModalOverlay" class="cyber-modal-overlay">
+        <div class="cyber-modal">
+            <div class="cyber-header">
+                <span class="cyber-alert-icon">⚠️</span>
+                <span>Diamant OS Cloud Reviewer</span>
+            </div>
+            <p class="cyber-body-text">Se ha interceptado un error de sintaxis crítica al procesar tu código fuente. El motor de compilación en la nube ha detenido la subida de manera preventiva:</p>
+            <div id="errorConsoleMessage" class="cyber-console">Error al parsear el árbol de sintaxis de C#.</div>
+            <button class="cyber-btn" onclick="closeErrorModal()">Regresar al Editor</button>
+        </div>
+    </div>
 
     <nav>
         <div class="nav-container">
@@ -464,7 +581,7 @@
 
                 <div class="ide-container">
                     <div class="ide-sidebar">
-                        <form action="/subir" method="POST">
+                        <form id="uploadForm" action="/subir" method="POST">
                             <div class="form-group">
                                 <label>Nombre del Software</label>
                                 <input type="text" name="nombre" placeholder="Ej: Rat_Football" required>
@@ -527,15 +644,12 @@ namespace DiamantApps
 
     <script>
         function switchTab(viewName) {
-            // Manejo de botones activos
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             
-            // Usamos un validador seguro para capturar el click del tab
             if(event && event.target) {
                 event.target.classList.add('active');
             }
 
-            // Alternar visibilidad de las capas
             if (viewName === 'tienda') {
                 document.getElementById('view-tienda').classList.remove('hidden');
                 document.getElementById('view-developer').classList.add('hidden');
@@ -544,6 +658,24 @@ namespace DiamantApps
                 document.getElementById('view-developer').classList.remove('hidden');
             }
         }
+
+        // 🔥 MANEJO INTERNO DEL MODAL CYBERPUNK
+        function showErrorModal(message) {
+            document.getElementById('errorConsoleMessage').innerText = message;
+            document.getElementById('errorModalOverlay').classList.add('active');
+        }
+
+        function closeErrorModal() {
+            document.getElementById('errorModalOverlay').classList.remove('active');
+        }
+
+        // Leer variables heredadas desde Flask si redirige de vuelta con un error
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('error_review')) {
+                showErrorModal(urlParams.get('error_review'));
+            }
+        });
     </script>
 </body>
 </html>
