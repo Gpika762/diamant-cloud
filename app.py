@@ -8,7 +8,7 @@ import cloudinary.uploader  # 🌟 NUEVO: El motor de Cloudinary
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session
 
 app = Flask(__name__)
-# Llave secreta para manejar las sesiones/cuentas de desarrolladores
+
 app.secret_key = "diamant_secret_key_os_cloud_123"
 
 DB_PATH = 'diamant_cloud.db'
