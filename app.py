@@ -16,7 +16,7 @@ OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "sk-or-v1-017485dc2cd8443d0803
 
 SUPABASE_URL = "https://yirbvadlmcmhvxdgmnaj.supabase.co"
 # Copia tu Key anon public real completa aquí dentro:
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwY3MiOiJzdXBhYmFzZSIsInJsZSI6ImFub24iLCJpYXQiOjE3ODIwMTAzMzEsImV4cCI6MjA5NzU4NjMzMX0.example_replace_this_with_your_exact_copied_text"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlpcmJ2YWRsbWNtaHZ4ZGdtbmFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5OTUzNjYsImV4cCI6MjA5NzU3MTM2Nn0.BtiNsYEPC1IAXBukbr-ZCRoSr88Ycl5UrQKrQNrXVFE"
 
 # Inicializamos el cliente oficial de Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
