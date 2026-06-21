@@ -1,46 +1,62 @@
 import os
 import sqlite3
-from flask import Flask, jsonify, render_template, request, redirect, url_for, flash
+from flask import Flask, jsonify, render_template, request, redirect, url_for, session
 
 app = Flask(__name__)
-app.secret_key = "diamant_secret_key_os"
+# Llave secreta para manejar las sesiones/cuentas de desarrolladores
+app.secret_key = "diamant_secret_key_os_cloud_123"
 
 DB_PATH = 'diamant_cloud.db'
 
 def inicializar_base_datos():
-    """Crea la base de datos real en internet si no existe"""
     conexion = sqlite3.connect(DB_PATH)
     cursor = conexion.cursor()
+    # Tabla de aplicaciones modificada para guardar el CÓDIGO FUENTE
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS aplicaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nombre TEXT NOT NULL,
             version TEXT NOT NULL,
             descripcion TEXT,
-            url_descarga TEXT NOT NULL,
-            categoria TEXT
+            categoria TEXT,
+            codigo_fuente TEXT,
+            autor TEXT
+        )
+    ''')
+    # Tabla para las cuentas de los programadores
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            username TEXT PRIMARY KEY,
+            password TEXT NOT NULL
         )
     ''')
     conexion.commit()
     conexion.close()
 
-# =========================================================================
-# 📡 ENDPOINT API PARA EL EMULADOR EN C#
-# =========================================================================
+# 🌐 API para el celular (Diamant Store C#)
 @app.route('/api/apps', methods=['GET'])
 def obtener_apps():
     conexion = sqlite3.connect(DB_PATH)
     conexion.row_factory = sqlite3.Row
     cursor = conexion.cursor()
-    cursor.execute('SELECT * FROM aplicaciones')
-    filas = cursor.fetchall() # Separamos la lectura en una línea normal
-    apps = [dict(fila) for fila in filas]
+    cursor.execute('SELECT id, nombre, version, descripcion, categoria FROM aplicaciones')
+    apps = [dict(fila) for fila in cursor.fetchall()]
     conexion.close()
     return jsonify(apps)
 
-# =========================================================================
-# 🌐 VISTA WEB PÚBLICA (GALAXY / PLAY STORE WEB STYLE)
-# =========================================================================
+# Endpoint para que el celular lea el código de una app específica si lo necesita
+@app.route('/api/apps/<int:app_id>/codigo', methods=['GET'])
+def obtener_codigo_app(app_id):
+    conexion = sqlite3.connect(DB_PATH)
+    cursor = conexion.cursor()
+    cursor.execute('SELECT codigo_fuente FROM aplicaciones WHERE id = ?', (app_id,))
+    resultado = cursor.fetchone()
+    conexion.close()
+    if resultado:
+        return jsonify({"codigo": resultado[0]})
+    return jsonify({"error": "App no encontrada"}), 404
+
+# 🛍️ Página Web Principal (Tienda + Login + Editor)
 @app.route('/', methods=['GET'])
 def pagina_web():
     conexion = sqlite3.connect(DB_PATH)
@@ -49,62 +65,89 @@ def pagina_web():
     cursor.execute('SELECT * FROM aplicaciones')
     apps = cursor.fetchall()
     conexion.close()
-    return render_template('tienda.html', aplicaciones=apps)
+    
+    usuario_logueado = session.get('usuario')
+    return render_template('tienda.html', aplicaciones=apps, usuario=usuario_logueado)
 
-# =========================================================================
-# 📤 PANEL PARA SUBIR NUEVAS APPS DESDE LA WEB
-# =========================================================================
-@app.route('/subir', methods=['GET', 'POST'])
-def subir_app():
-    if request.method == 'POST':
-        nombre = request.form.get('nombre')
-        version = request.form.get('version')
-        descripcion = request.form.get('descripcion')
-        url_descarga = request.form.get('url_descarga')
-        categoria = request.form.get('categoria')
-
-        if nombre and version and url_descarga:
-            conexion = sqlite3.connect(DB_PATH)
-            cursor = conexion.cursor()
-            cursor.execute('''
-                INSERT INTO aplicaciones (nombre, version, descripcion, url_descarga, categoria)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (nombre, version, descripcion, url_descarga, categoria))
+# 🔑 SISTEMA DE CUENTAS: Registro y Login
+@app.route('/login', methods=['POST'])
+def login():
+    username = request.form.get('username')
+    password = request.form.get('password')
+    accion = request.form.get('accion') # "login" o "registro"
+    
+    conexion = sqlite3.connect(DB_PATH)
+    cursor = conexion.cursor()
+    
+    if accion == "registro":
+        try:
+            cursor.execute('INSERT INTO usuarios (username, password) VALUES (?, ?)', (username, password))
             conexion.commit()
-            conexion.close()
-            return redirect(url_for('pagina_web'))
+            session['usuario'] = username
+        except sqlite3.IntegrityError:
+            pass # El usuario ya existe
+    else:
+        cursor.execute('SELECT * FROM usuarios WHERE username = ? AND password = ?', (username, password))
+        if cursor.fetchone():
+            session['usuario'] = username
             
-    return '''
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Diamant Developer - Subir App</title>
-        <style>
-            body { font-family: sans-serif; background: #121317; color: white; padding: 40px; }
-            .form-box { max-width: 500px; margin: 0 auto; background: #1c1e24; padding: 30px; border-radius: 20px; border: 1px solid #292d35; }
-            input, select, textarea { width: 100%; padding: 10px; margin: 10px 0; background: #2e323d; border: none; color: white; border-radius: 8px; box-sizing: border-box; }
-            button { background: #0a6ef2; color: white; padding: 12px; width: 100%; border: none; border-radius: 10px; cursor: pointer; font-weight: bold; }
-        </style>
-    </head>
-    <body>
-        <div class="form-box">
-            <h2>📤 Publicar App en Diamant Cloud</h2>
-            <form method="POST">
-                <input type="text" name="nombre" placeholder="Nombre de la App (ej: Rat Football League)" required>
-                <input type="text" name="version" placeholder="Versión (ej: 4.1.0)" required>
-                <select name="categoria">
-                    <option value="Juegos">Juegos</option>
-                    <option value="Sistema">Sistema</option>
-                    <option value="Herramientas">Herramientas</option>
-                </select>
-                <textarea name="descripcion" placeholder="Descripción de lo que hace tu app..." rows="3"></textarea>
-                <input type="url" name="url_descarga" placeholder="Link de descarga directa del .EXE" required>
-                <button type="submit">🚀 Lanzar a la Tienda</button>
-            </form>
-        </div>
-    </body>
-    </html>
-    '''
+    conexion.close()
+    return redirect(url_for('pagina_web'))
+
+@app.route('/logout')
+def logout():
+    session.pop('usuario', None)
+    return redirect(url_for('pagina_web'))
+
+# 🚀 MOTOR DE COMPILACIÓN Y PUBLICACIÓN EN LA NUBE
+@app.route('/subir', methods=['POST'])
+def subir_app():
+    if 'usuario' not in session:
+        return redirect(url_for('pagina_web'))
+        
+    nombre = request.form.get('nombre')
+    version = request.form.get('version')
+    descripcion = request.form.get('descripcion')
+    categoria = request.form.get('categoria')
+    codigo = request.form.get('codigo_fuente')
+    autor = session['usuario']
+
+    # 🧠 Validador de errores básico en la nube antes de guardar
+    if "class" not in codigo or "void" not in codigo:
+        # Si el código no tiene estructura básica, tiramos una advertencia simulada
+        return "<h3>⚠️ Error de compilación Cloud: Estructura de clase C# no válida. Revisa tus llaves.</h3><a href='/'>Volver al editor</a>"
+
+    if nombre and version and codigo:
+        conexion = sqlite3.connect(DB_PATH)
+        cursor = conexion.cursor()
+        cursor.execute('''
+            INSERT INTO aplicaciones (nombre, version, descripcion, categoria, codigo_fuente, autor)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (nombre, version, descripcion, categoria, codigo, autor))
+        conexion.commit()
+        conexion.close()
+        
+    return redirect(url_for('pagina_web'))
+
+# 🗑️ ELIMINAR APP (Seguridad: Solo el autor puede borrarla)
+@app.route('/eliminar/<int:app_id>')
+def eliminar_app(app_id):
+    if 'usuario' not in session:
+        return redirect(url_for('pagina_web'))
+        
+    conexion = sqlite3.connect(DB_PATH)
+    cursor = conexion.cursor()
+    
+    # Verificamos que pertenezca al usuario activo
+    cursor.execute('SELECT autor FROM aplicaciones WHERE id = ?', (app_id,))
+    resultado = cursor.fetchone()
+    
+    if resultado and resultado[0] == session['usuario']:
+        cursor.execute('DELETE FROM aplicaciones WHERE id = ?', (app_id,))
+        conexion.commit()
+        
+    conexion.close()
+    return redirect(url_for('pagina_web'))
 
 if __name__ == '__main__':
     inicializar_base_datos()
