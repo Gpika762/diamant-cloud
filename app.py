@@ -18,8 +18,8 @@ OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "sk-or-v1-017485dc2cd8443d0803
 # 🌟 NUEVO: CONFIGURACIÓN DE CLOUDINARY (Reemplaza por completo a Supabase)
 cloudinary.config( 
     cloud_name = "dwoaq0vf6", 
-    api_key = "852478336132985", 
-    api_secret = "sdhkaNkTsxn1JBJ4pOQvnmyUbkg",
+    api_key = "784588949973579", 
+    api_secret = "VFZ6V7ZOQlw7vCe_iI80qnD_1Iw",
     secure = True
 )
 
