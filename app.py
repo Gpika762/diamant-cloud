@@ -9,12 +9,14 @@ app = Flask(__name__)
 app.secret_key = "diamant_secret_key_os_cloud_123"
 
 DB_PATH = 'diamant_cloud.db'
-OPENROUTER_API_KEY = "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"
+
+# 🔐 CLAVE SEGURA: Busca la DiamantKey en Render. Si no está configurada, usa tu clave por defecto.
+OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
 
 def inicializar_base_datos():
     conexion = sqlite3.connect(DB_PATH)
     cursor = conexion.cursor()
-
+    # Tabla de aplicaciones modificada para guardar el CÓDIGO FUENTE
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS aplicaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,7 +104,7 @@ def logout():
     session.pop('usuario', None)
     return redirect(url_for('pagina_web'))
 
-# 🚀 MOTOR DE COMPILACIÓN E IA CODE REVIEWER EN LA NUBE
+# 🚀 MOTOR DE COMPILACIÓN E IA CODE REVIEWER REPARADO
 @app.route('/subir', methods=['POST'])
 def subir_app():
     if 'usuario' not in session:
@@ -115,22 +117,30 @@ def subir_app():
     codigo = request.form.get('codigo_fuente')
     autor = session['usuario']
 
-    # 🤖 PROMPT DE INGENIERÍA: Forzamos a la IA a responder estrictamente en formato JSON
+    # 🤖 INSTRUCCIÓN ULTRA ESTRICTA: Evita que la IA "perdone" los códigos rotos
     prompt_ia = f"""
-    Actúa como el compilador y revisor de código experto para el ecosistema Diamant OS.
-    Analiza el siguiente código fuente escrito en C# para verificar si tiene errores de sintaxis (llaves mal cerradas, falta de puntos y coma, errores de herencia, nombres de variables inválidos).
+    Eres un compilador estricto de C# para Diamant OS. Tu única tarea es validar si el código tiene errores de sintaxis reales (como llaves sin cerrar, falta de puntos y coma, falta de la palabra 'class', variables no declaradas o bloques de bucles mal formados).
     
-    Código a revisar:
+    NO intentes corregir el código. Si falta un solo punto y coma o una llave, debes marcarlo como inválido.
+
+    Código C# a evaluar:
     {codigo}
     
-    Debes responder ÚNICAMENTE con un formato JSON estricto sin bloques de código markdown adicionas, respetando la siguiente estructura:
+    Responde OBLIGATORIAMENTE en este formato JSON puro, sin decoraciones de markdown ni texto extra:
     {{
-        "valido": true o false,
-        "error_mensaje": "Aquí detallas de forma amigable los errores encontrados línea por línea si es false, de lo contrario déjalo vacío."
+        "valido": false,
+        "error_mensaje": "Detalle del error aquí (línea y qué falta)"
+    }}
+    o si está 100% perfecto:
+    {{
+        "valido": true,
+        "error_mensaje": ""
     }}
     """
 
-    # 🧠 Envío del código al cerebro de la IA (OpenRouter)
+    pasa_la_ia = False  # Bandera de control para habilitar el guardado seguro
+
+    # 🧠 Envío del código al cerebro de la IA
     try:
         url_api = "https://openrouter.ai/api/v1/chat/completions"
         encabezados = {
@@ -138,48 +148,47 @@ def subir_app():
             "Content-Type": "application/json"
         }
         cuerpo_peticion = {
-            "model": "google/gemini-2.5-flash-lite",
-            "messages": [{"role": "user", "content": prompt_ia}]
+            "model": "google/gemini-2.5-flash",
+            "messages": [{"role": "user", "content": prompt_ia}],
+            "response_format": { "type": "json_object" } # Forzamos a la API a devolver JSON nativo
         }
         
-        respuesta = requests.post(url_api, headers=encabezados, json=cuerpo_peticion, timeout=10)
+        respuesta = requests.post(url_api, headers=encabezados, json=cuerpo_peticion, timeout=12)
         
         if respuesta.status_code == 200:
             datos_ia = respuesta.json()
             contenido_respuesta = datos_ia['choices'][0]['message']['content'].strip()
             
-            # Limpiar posibles bloques de formato que a veces añade la IA por error
-            if contenido_respuesta.startswith("```json"):
-                contenido_respuesta = contenido_respuesta.split("```json")[1].split("```")[0].strip()
-            elif contenido_respuesta.startswith("```"):
-                contenido_respuesta = contenido_respuesta.split("```")[1].split("```")[0].strip()
+            # Limpiador de bloques markdown rebeldes
+            if "```" in contenido_respuesta:
+                contenido_respuesta = contenido_respuesta.split("```")[1]
+                if contenido_respuesta.startswith("json"):
+                    contenido_respuesta = contenido_respuesta[4:]
+                contenido_respuesta = contenido_respuesta.split("```")[0].strip()
                 
             resultado_revision = json.loads(contenido_respuesta)
             
-            # Si la IA determina que el código está roto, devolvemos al editor sin borrar nada
-            if not resultado_revision.get("valido", True):
-                error_formateado = resultado_revision.get("error_mensaje", "Error desconocido de sintaxis.").replace('"', '\\"').replace('\n', '\\n')
+            # Evaluamos la respuesta real del validador
+            if resultado_revision.get("valido") == False:
+                error_formateado = resultado_revision.get("error_mensaje", "Error detectado en la sintaxis.").replace('"', '\\"').replace('\n', '\\n')
                 return f'''
                 <script>
                     alert("⚠️ Diamant OS Cloud Reviewer - Error de Compilación:\\n\\n{error_formateado}");
-                    window.history.back(); // Regresa manteniendo los datos en el formulario web
+                    window.history.back();
                 </script>
                 '''
+            else:
+                pasa_la_ia = True  # El código pasó con éxito total
         else:
             print(f"Error de API OpenRouter: Código {respuesta.status_code}")
+            pasa_la_ia = True  # Si la API falla por error de pasarela, dejamos pasar para no bloquear tu trabajo
             
     except Exception as e:
         print(f"Excepción en la validación por IA: {e}")
-        # En caso de caída de internet o error de respuesta, se aplica un rollback preventivo amigable
-        return '''
-        <script>
-            alert("⚡ Diamant Cloud Link: El revisor IA no respondió a tiempo. Tu código está intacto, intenta compilar nuevamente.");
-            window.history.back();
-        </script>
-        '''
+        pasa_la_ia = True  # Rollback preventivo: Si no hay internet, permite subir para que guardes tus apps
 
-    # Si pasa la revisión de la IA exitosamente, se guarda en la base de datos
-    if nombre and version and codigo:
+    # 💾 SISTEMA DE GUARDADO CORREGIDO: Solo se ejecuta si pasó las pruebas o si hubo un bypass de red
+    if pasa_la_ia and nombre and version and codigo:
         conexion = sqlite3.connect(DB_PATH)
         cursor = conexion.cursor()
         cursor.execute('''
@@ -188,8 +197,15 @@ def subir_app():
         ''', (nombre, version, descripcion, categoria, codigo, autor))
         conexion.commit()
         conexion.close()
-        
-    return redirect(url_for('pagina_web'))
+        return redirect(url_for('pagina_web'))
+
+    # Si por alguna razón llegó acá sin datos válidos
+    return '''
+    <script>
+        alert("❌ Error: Los campos Nombre, Versión o Código no pueden estar vacíos.");
+        window.history.back();
+    </script>
+    '''
 
 # 🗑️ ELIMINAR APP (Seguridad: Solo el autor puede borrarla)
 @app.route('/eliminar/<int:app_id>')
