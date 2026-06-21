@@ -14,7 +14,7 @@ OPENROUTER_API_KEY = "sk-or-v1-017485dc2cd8443d08034b16440a587c4f737530cb61d6734
 def inicializar_base_datos():
     conexion = sqlite3.connect(DB_PATH)
     cursor = conexion.cursor()
-    # Tabla de aplicaciones modificada para guardar el CÓDIGO FUENTE
+
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS aplicaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
