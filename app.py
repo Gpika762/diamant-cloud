@@ -11,10 +11,9 @@ app.secret_key = "diamant_secret_key_os_cloud_123"
 
 DB_PATH = 'diamant_cloud.db'
 
-# 🔐 CLAVE SEGURA OPENROUTER: Busca la DiamantKey en Render.
+
 OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
 
-# 🔑 CONFIGURACIÓN INTEGRADA DE SUPABASE
 SUPABASE_URL = "https://yirbvadlmcmhvxdgmnaj.supabase.co"
 # Copia tu Key anon public real completa aquí dentro:
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJwY3MiOiJzdXBhYmFzZSIsInJsZSI6ImFub24iLCJpYXQiOjE3ODIwMTAzMzEsImV4cCI6MjA5NzU4NjMzMX0.example_replace_this_with_your_exact_copied_text"
