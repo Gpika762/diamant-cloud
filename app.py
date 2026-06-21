@@ -52,7 +52,7 @@ def inicializar_base_datos():
     conexion.commit()
     conexion.close()
 
-# 🌐 API CORREGIDA para el celular (Diamant Store C#) - ¡Ahora con Orden por Fechas!
+
 @app.route('/api/apps', methods=['GET'])
 def obtener_apps():
     conexion = sqlite3.connect(DB_PATH)
