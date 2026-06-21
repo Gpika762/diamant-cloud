@@ -1,10 +1,11 @@
 import os
 import sqlite3
 import json
-import requests  # Necesario para llamar a la API de OpenRouter y Supabase
-import io        # 🌟 NUEVO: Requerido para enviar archivos binarios en memoria a Supabase
+import requests  # Necesario para llamar a la API de OpenRouter
+import io        # Requerido para codificar los strings a bytes en memoria
+import cloudinary
+import cloudinary.uploader  # 🌟 NUEVO: El motor de Cloudinary
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session
-from supabase import create_client, Client
 
 app = Flask(__name__)
 # Llave secreta para manejar las sesiones/cuentas de desarrolladores
@@ -14,17 +15,19 @@ DB_PATH = 'diamant_cloud.db'
 
 OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
 
-SUPABASE_URL = "https://yirbvadlmcmhvxdgmnaj.supabase.co"
-# Copia tu Key anon public real completa aquí dentro:
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlpcmJ2YWRsbWNtaHZ4ZGdtbmFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5OTUzNjYsImV4cCI6MjA5NzU3MTM2Nn0.BtiNsYEPC1IAXBukbr-ZCRoSr88Ycl5UrQKrQNrXVFE"
-
-# Inicializamos el cliente oficial de Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# 🌟 NUEVO: CONFIGURACIÓN DE CLOUDINARY (Reemplaza por completo a Supabase)
+cloudinary.config( 
+    cloud_name = "dwoaq0vf6", 
+    api_key = "852478336132985", 
+    api_secret = "sdhkaNkTsxn1JBJ4pOQvnmyUbkg",
+    secure = True
+)
 
 def inicializar_base_datos():
     conexion = sqlite3.connect(DB_PATH)
     cursor = conexion.cursor()
-    # Agregamos la columna url_descarga para almacenar el link fijo de Supabase
+    
+    # 🌟 CORRECCIÓN: Agregamos la columna 'fecha_subida' que se auto-rellena con la fecha y hora actual
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS aplicaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,9 +37,11 @@ def inicializar_base_datos():
             categoria TEXT,
             codigo_fuente TEXT,
             autor TEXT,
-            url_descarga TEXT
+            url_descarga TEXT,
+            fecha_subida DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    
     # Tabla para las cuentas de los programadores
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
@@ -47,19 +52,20 @@ def inicializar_base_datos():
     conexion.commit()
     conexion.close()
 
-# 🌐 API CORREGIDA para el celular (Diamant Store C#)
+# 🌐 API CORREGIDA para el celular (Diamant Store C#) - ¡Ahora con Orden por Fechas!
 @app.route('/api/apps', methods=['GET'])
 def obtener_apps():
     conexion = sqlite3.connect(DB_PATH)
     conexion.row_factory = sqlite3.Row
     cursor = conexion.cursor()
-    # Ahora incluimos id, autor y url_descarga para que el celular no falle al deserializar
-    cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga FROM aplicaciones')
+    
+    # 🌟 NUEVO: Añadimos 'fecha_subida' y ordenamos por DESC (de más nueva a más vieja) para la Galería organizada
+    cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, fecha_subida FROM aplicaciones ORDER BY fecha_subida DESC')
     apps = [dict(fila) for fila in cursor.fetchall()]
     conexion.close()
     return jsonify(apps)
 
-# Endpoint secundario por si el celular sigue queriendo leer el string directo por ID
+# Endpoint secundario para leer por ID
 @app.route('/api/apps/<int:app_id>/codigo', methods=['GET'])
 def obtener_codigo_app(app_id):
     conexion = sqlite3.connect(DB_PATH)
@@ -80,7 +86,8 @@ def pagina_web():
     conexion = sqlite3.connect(DB_PATH)
     conexion.row_factory = sqlite3.Row
     cursor = conexion.cursor()
-    cursor.execute('SELECT * FROM aplicaciones')
+    # Mostramos todo ordenado cronológicamente en la web también
+    cursor.execute('SELECT * FROM aplicaciones ORDER BY fecha_subida DESC')
     apps = cursor.fetchall()
     conexion.close()
     
@@ -117,7 +124,7 @@ def logout():
     session.pop('usuario', None)
     return redirect(url_for('pagina_web'))
 
-# 🚀 MOTOR DE COMPILACIÓN + SUBIDA ULTRA SEGURA A SUPABASE STORAGE
+# 🚀 MOTOR DE COMPILACIÓN + SUBIDA INYECTADA A CLOUDINARY STORAGE
 @app.route('/subir', methods=['POST'])
 def subir_app():
     if 'usuario' not in session:
@@ -191,38 +198,35 @@ def subir_app():
                 pasa_la_ia = True
         else:
             print(f"Error de API OpenRouter: Código {respuesta.status_code}")
-            pasa_la_ia = True  # Bypass si la pasarela se cae
+            pasa_la_ia = True  # Bypass preventivo
             
     except Exception as e:
         print(f"Excepción en la validación por IA: {e}")
         pasa_la_ia = True  # Rollback preventivo por red
 
-    # 💾 GUARDA EL ARCHIVO EN LA NUBE SI PASÓ LAS PRUEBAS
+    # 💾 GUARDA EL ARCHIVO EN CLOUDINARY SI PASÓ LAS PRUEBAS
     if pasa_la_ia and nombre and version and codigo:
         url_descarga_final = ""
         try:
-            # 1. Crear el nombre del archivo plano .cs
             nombre_archivo_cs = f"{nombre.lower().replace(' ', '_')}.cs"
             
-            # 🌟 CORRECCIÓN: Creamos un flujo binario en memoria compatible con Supabase
-            archivo_bytes = io.BytesIO(codigo.encode('utf-8'))
+            # Convertimos el string de código C# en bytes de memoria limpios
+            archivo_bytes = io.BytesIO(codigo.encode('utf-8')).getvalue()
             
-            # 2. Subir el archivo de texto directo a Supabase Storage
-            bucket_name = "apps"
-            
-            # 🌟 CORRECCIÓN: "upsert": True (Booleano nativo, no texto) para poder sobreescribir sin rebotes
-            supabase.storage.from_(bucket_name).upload(
-                path=nombre_archivo_cs,
-                file=archivo_bytes.getvalue(),
-                file_options={"content-type": "text/plain; charset=utf-8", "upsert": True}
+            # 🌟 NUEVO: Subida directa a Cloudinary sin rebotes usando 'raw'
+            resultado = cloudinary.uploader.upload(
+                archivo_bytes,
+                folder="diamant_store_uploads",
+                resource_type="raw",
+                public_id=nombre_archivo_cs,
+                overwrite=True
             )
             
-            # 3. Extraer el enlace estático público
-            url_descarga_final = supabase.storage.from_(bucket_name).get_public_url(nombre_archivo_cs)
+            # Extraemos la url segura que nos da Cloudinary
+            url_descarga_final = resultado['secure_url']
             
         except Exception as storage_err:
-            print(f"Error subiendo a Supabase Storage: {storage_err}")
-            # Fallback en caso de que el bucket falle
+            print(f"Error subiendo a Cloudinary Storage: {storage_err}")
             url_descarga_final = "error_storage"
 
         # 4. Guardar metadatos e incluir la URL permanente en SQLite
