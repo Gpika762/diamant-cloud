@@ -4,11 +4,11 @@ import json
 import requests  # Necesario para llamar a la API de OpenRouter
 import io        # Requerido para codificar los strings a bytes en memoria
 import cloudinary
-import cloudinary.uploader  # 🌟 NUEVO: El motor de Cloudinary
-from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_from_directory
+import cloudinary.uploader  # 🌟 El motor de Cloudinary
+from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_from_directory, Response
+from werkzeug.security import generate_password_hash, check_password_hash # Para encriptar contraseñas
 
 app = Flask(__name__)
-
 app.secret_key = "diamant_secret_key_os_cloud_123"
 
 DB_PATH = 'diamant_cloud.db'
@@ -54,9 +54,9 @@ def inicializar_base_datos():
     # Asegura que exista la carpeta para tus archivos de actualización física
     if not os.path.exists(UPDATES_DIR):
         os.makedirs(UPDATES_DIR)
-        # Creamos un archivo version.txt por defecto si no existe
+        # Inicializamos con tu versión de desarrollo actual
         with open(os.path.join(UPDATES_DIR, 'version.txt'), 'w') as f:
-            f.write("1.1.0 b5")
+            f.write("1.0.0 bf3")
 
 
 # =====================================================================
@@ -65,21 +65,36 @@ def inicializar_base_datos():
 
 @app.route('/version.txt', methods=['GET'])
 def obtener_version_ota():
-    """Devuelve la versión actual del OS en texto plano para el C#"""
+    """Devuelve la versión actual del OS en texto plano limpio para el C#"""
     try:
         ruta_version = os.path.join(UPDATES_DIR, 'version.txt')
         if os.path.exists(ruta_version):
             with open(ruta_version, 'r') as f:
                 version = f.read().strip()
-            return version, 200, {'Content-Type': 'text/plain'}
-        return "1.1.0 b5", 200, {'Content-Type': 'text/plain'}
+            return Response(version, mimetype='text/plain')
+        return Response("1.0.0 bf3", mimetype='text/plain')
     except Exception as e:
-        return f"Error leyendo version: {str(e)}", 500
+        return Response(f"Error leyendo version: {str(e)}", status=500, mimetype='text/plain')
+
+
+@app.route('/set_version', methods=['POST'])
+def cambiar_version_ota():
+    """Ruta útil para que cambies la versión en el servidor de forma remota"""
+    nueva_version = request.form.get('version')
+    if nueva_version:
+        try:
+            ruta_version = os.path.join(UPDATES_DIR, 'version.txt')
+            with open(ruta_version, 'w') as f:
+                f.write(nueva_version.strip())
+            return jsonify({"status": "ok", "version_guardada": nueva_version}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "Falta el parámetro 'version'"}), 400
 
 
 @app.route('/update.zip', methods=['GET'])
 def descargar_update_ota():
-    """Descarga el paquete físico real .zip que procesará el AjustesControl.cs"""
+    """Descarga el paquete físico real .zip que procesará tu AjustesControl en C#"""
     try:
         return send_from_directory(UPDATES_DIR, 'update.zip', as_attachment=True)
     except Exception as e:
@@ -138,14 +153,18 @@ def login():
     
     if accion == "registro":
         try:
-            cursor.execute('INSERT INTO usuarios (username, password) VALUES (?, ?)', (username, password))
+            # 🔐 Encriptar contraseña antes de guardarla
+            password_encriptada = generate_password_hash(password)
+            cursor.execute('INSERT INTO usuarios (username, password) VALUES (?, ?)', (username, password_encriptada))
             conexion.commit()
             session['usuario'] = username
         except sqlite3.IntegrityError:
             pass 
     else:
-        cursor.execute('SELECT * FROM usuarios WHERE username = ? AND password = ?', (username, password))
-        if cursor.fetchone():
+        cursor.execute('SELECT password FROM usuarios WHERE username = ?', (username,))
+        resultado = cursor.fetchone()
+        # 🔐 Verificar hash seguro de la contraseña
+        if resultado and check_password_hash(resultado[0], password):
             session['usuario'] = username
             
     conexion.close()
