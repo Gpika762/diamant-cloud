@@ -5,17 +5,18 @@ import requests  # Necesario para llamar a la API de OpenRouter
 import io        # Requerido para codificar los strings a bytes en memoria
 import cloudinary
 import cloudinary.uploader  # 🌟 NUEVO: El motor de Cloudinary
-from flask import Flask, jsonify, render_template, request, redirect, url_for, session
+from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_from_directory
 
 app = Flask(__name__)
 
 app.secret_key = "diamant_secret_key_os_cloud_123"
 
 DB_PATH = 'diamant_cloud.db'
+UPDATES_DIR = 'updates'  # Carpeta donde guardarás el archivo update.zip en el servidor
 
 OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
 
-# 🌟 NUEVO: CONFIGURACIÓN DE CLOUDINARY (Reemplaza por completo a Supabase)
+# 🌟 CONFIGURACIÓN DE CLOUDINARY
 cloudinary.config( 
     cloud_name = "dwoaq0vf6", 
     api_key = "784588949973579", 
@@ -27,7 +28,6 @@ def inicializar_base_datos():
     conexion = sqlite3.connect(DB_PATH)
     cursor = conexion.cursor()
     
-    # 🌟 CORRECCIÓN: Agregamos la columna 'fecha_subida' que se auto-rellena con la fecha y hora actual
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS aplicaciones (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -42,7 +42,6 @@ def inicializar_base_datos():
         )
     ''')
     
-    # Tabla para las cuentas de los programadores
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             username TEXT PRIMARY KEY,
@@ -52,20 +51,54 @@ def inicializar_base_datos():
     conexion.commit()
     conexion.close()
 
+    # Asegura que exista la carpeta para tus archivos de actualización física
+    if not os.path.exists(UPDATES_DIR):
+        os.makedirs(UPDATES_DIR)
+        # Creamos un archivo version.txt por defecto si no existe
+        with open(os.path.join(UPDATES_DIR, 'version.txt'), 'w') as f:
+            f.write("1.1.0 b5")
+
+
+# =====================================================================
+# 🌐 SECCIÓN DEDICADA: ENDPOINTS PARA ACTUALIZACIONES OTA (DIAMANT OS)
+# =====================================================================
+
+@app.route('/version.txt', methods=['GET'])
+def obtener_version_ota():
+    """Devuelve la versión actual del OS en texto plano para el C#"""
+    try:
+        ruta_version = os.path.join(UPDATES_DIR, 'version.txt')
+        if os.path.exists(ruta_version):
+            with open(ruta_version, 'r') as f:
+                version = f.read().strip()
+            return version, 200, {'Content-Type': 'text/plain'}
+        return "1.1.0 b5", 200, {'Content-Type': 'text/plain'}
+    except Exception as e:
+        return f"Error leyendo version: {str(e)}", 500
+
+
+@app.route('/update.zip', methods=['GET'])
+def descargar_update_ota():
+    """Descarga el paquete físico real .zip que procesará el AjustesControl.cs"""
+    try:
+        return send_from_directory(UPDATES_DIR, 'update.zip', as_attachment=True)
+    except Exception as e:
+        return jsonify({"error": "El archivo de actualización no está disponible en el servidor."}), 404
+
+# =====================================================================
+
 
 @app.route('/api/apps', methods=['GET'])
 def obtener_apps():
     conexion = sqlite3.connect(DB_PATH)
     conexion.row_factory = sqlite3.Row
     cursor = conexion.cursor()
-    
-    # 🌟 NUEVO: Añadimos 'fecha_subida' y ordenamos por DESC (de más nueva a más vieja) para la Galería organizada
     cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, fecha_subida FROM aplicaciones ORDER BY fecha_subida DESC')
     apps = [dict(fila) for fila in cursor.fetchall()]
     conexion.close()
     return jsonify(apps)
 
-# Endpoint secundario para leer por ID
+
 @app.route('/api/apps/<int:app_id>/codigo', methods=['GET'])
 def obtener_codigo_app(app_id):
     conexion = sqlite3.connect(DB_PATH)
@@ -80,13 +113,12 @@ def obtener_codigo_app(app_id):
         })
     return jsonify({"error": "App no encontrada"}), 404
 
-# 🛍️ Página Web Principal (Tienda + Login + Editor)
+
 @app.route('/', methods=['GET'])
 def pagina_web():
     conexion = sqlite3.connect(DB_PATH)
     conexion.row_factory = sqlite3.Row
     cursor = conexion.cursor()
-    # Mostramos todo ordenado cronológicamente en la web también
     cursor.execute('SELECT * FROM aplicaciones ORDER BY fecha_subida DESC')
     apps = cursor.fetchall()
     conexion.close()
@@ -94,12 +126,12 @@ def pagina_web():
     usuario_logueado = session.get('usuario')
     return render_template('tienda.html', aplicaciones=apps, usuario=usuario_logueado)
 
-# 🔑 SISTEMA DE CUENTAS: Registro y Login
+
 @app.route('/login', methods=['POST'])
 def login():
     username = request.form.get('username')
     password = request.form.get('password')
-    accion = request.form.get('accion') # "login" o "registro"
+    accion = request.form.get('accion')
     
     conexion = sqlite3.connect(DB_PATH)
     cursor = conexion.cursor()
@@ -110,7 +142,7 @@ def login():
             conexion.commit()
             session['usuario'] = username
         except sqlite3.IntegrityError:
-            pass # El usuario ya existe
+            pass 
     else:
         cursor.execute('SELECT * FROM usuarios WHERE username = ? AND password = ?', (username, password))
         if cursor.fetchone():
@@ -119,12 +151,13 @@ def login():
     conexion.close()
     return redirect(url_for('pagina_web'))
 
+
 @app.route('/logout')
 def logout():
     session.pop('usuario', None)
     return redirect(url_for('pagina_web'))
 
-# 🚀 MOTOR DE COMPILACIÓN + SUBIDA INYECTADA A CLOUDINARY STORAGE
+
 @app.route('/subir', methods=['POST'])
 def subir_app():
     if 'usuario' not in session:
@@ -137,7 +170,6 @@ def subir_app():
     codigo = request.form.get('codigo_fuente')
     autor = session['usuario']
 
-    # 🤖 INSTRUCCIÓN DE LA IA COMPILADORA
     prompt_ia = f"""
     Eres un compilador estricto de C# para Diamant OS. Tu única tarea es validar si el código tiene errores de sintaxis reales (como llaves sin cerrar, falta de puntos y coma, falta de la palabra 'class', variables no declaradas o bloques de bucles mal formados).
     
@@ -198,22 +230,16 @@ def subir_app():
                 pasa_la_ia = True
         else:
             print(f"Error de API OpenRouter: Código {respuesta.status_code}")
-            pasa_la_ia = True  # Bypass preventivo
+            pasa_la_ia = True  
             
     except Exception as e:
         print(f"Excepción en la validación por IA: {e}")
-        pasa_la_ia = True  # Rollback preventivo por red
+        pasa_la_ia = True  
 
-    # 💾 GUARDA EL ARCHIVO EN CLOUDINARY SI PASÓ LAS PRUEBAS
-# 💾 GUARDA EL ARCHIVO EN CLOUDINARY SI PASÓ LAS PRUEBAS
     if pasa_la_ia and nombre and version and codigo:
         url_descarga_final = ""
         try:
             nombre_archivo_cs = f"{nombre.lower().replace(' ', '_')}.cs"
-            
-            # 🌟 CORRECCIÓN: Cloudinary raw necesita un string o un archivo real. 
-            # Si le pasamos los bytes puros a veces rebota si no detecta el buffer.
-            # Vamos a pasarle el string de código directamente como un archivo de texto en memoria simulado:
             archivo_simulado = io.BytesIO(codigo.encode('utf-8'))
             
             resultado = cloudinary.uploader.upload(
@@ -227,11 +253,9 @@ def subir_app():
             url_descarga_final = resultado['secure_url']
             
         except Exception as storage_err:
-            # 🌟 ESTO IMPRIMIRÁ EL ERROR REAL EN RENDER PARA VER QUÉ SE QUEJA CLOUDINARY
             print(f"--- ERROR CRÍTICO CLOUDINARY ---: {storage_err}")
             url_descarga_final = f"error: {str(storage_err)}"
 
-        # 4. Guardar metadatos en SQLite
         conexion = sqlite3.connect(DB_PATH)
         cursor = conexion.cursor()
         cursor.execute('''
@@ -249,7 +273,7 @@ def subir_app():
     </script>
     '''
 
-# 🗑️ ELIMINAR APP (Seguridad: Solo el autor puede borrarla)
+
 @app.route('/eliminar/<int:app_id>')
 def eliminar_app(app_id):
     if 'usuario' not in session:
@@ -257,7 +281,6 @@ def eliminar_app(app_id):
         
     conexion = sqlite3.connect(DB_PATH)
     cursor = conexion.cursor()
-    
     cursor.execute('SELECT autor FROM aplicaciones WHERE id = ?', (app_id,))
     resultado = cursor.fetchone()
     
@@ -268,7 +291,7 @@ def eliminar_app(app_id):
     conexion.close()
     return redirect(url_for('pagina_web'))
 
-# 🌟 CORRECCIÓN DE ARRANQUE: Configuración limpia para el puerto de Render en producción
+
 if __name__ == '__main__':
     inicializar_base_datos()
     puerto = int(os.environ.get("PORT", 5000))
