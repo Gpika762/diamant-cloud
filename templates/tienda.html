@@ -17,6 +17,7 @@
             --text-main: #ffffff;
             --text-muted: #7c8491;
             --border: #23252f;
+            --ota-color: #ff9500;
         }
 
         body {
@@ -136,6 +137,47 @@
             color: var(--text-muted);
             font-size: 15px;
             margin: 0;
+        }
+
+        /* 📦 PANEL EXCLUSIVO MONITOR OTA (SISTEMA OPERATIVO) */
+        .ota-monitor-card {
+            background: linear-gradient(135deg, rgba(255, 149, 0, 0.1), rgba(22, 23, 29, 0.6));
+            border: 1px solid rgba(255, 149, 0, 0.25);
+            border-radius: 20px;
+            padding: 20px;
+            margin-bottom: 35px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .ota-info-layout {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .ota-icon-badge {
+            width: 45px;
+            height: 45px;
+            background-color: rgba(255, 149, 0, 0.15);
+            color: var(--ota-color);
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            font-weight: bold;
+        }
+
+        .ota-server-tag {
+            background-color: rgba(255, 255, 255, 0.05);
+            padding: 8px 14px;
+            border-radius: 10px;
+            font-size: 13px;
+            font-family: monospace;
+            color: #d1d5db;
+            border: 1px solid var(--border);
         }
 
         /* 🛍️ VISTA TIENDA: GRID DE APLICACIONES */
@@ -523,6 +565,22 @@
                 <p class="sub">Repositorio oficial de paquetes binarios para Diamant OS Core.</p>
             </div>
 
+            {% if usuario %}
+            <div class="ota-monitor-card">
+                <div class="ota-info-layout">
+                    <div class="ota-icon-badge">OTA</div>
+                    <div>
+                        <h4 style="margin: 0 0 4px 0; font-size: 15px; color: var(--ota-color);">Canal de Distribución de Sistema</h4>
+                        <p style="margin: 0; font-size: 13px; color: var(--text-muted);">Servidor de actualizaciones en segundo plano listo para AjustesControl.cs</p>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <span class="ota-server-tag">GET /version.txt</span>
+                    <a href="/update.zip" class="download-btn" style="background-color: rgba(255,149,0,0.15); color: var(--ota-color); border: 1px solid rgba(255,149,0,0.3);">📥 Descargar update.zip</a>
+                </div>
+            </div>
+            {% endif %}
+
             <div class="store-grid">
                 {% for app in aplicaciones %}
                 <div class="app-card">
@@ -541,7 +599,12 @@
                         <p class="app-desc">{{ app.descripcion }}</p>
                     </div>
                     <div class="card-actions">
-                        <button class="download-btn" style="opacity: 0.6; cursor: not-allowed;" disabled>✓ Disponible en Teléfono</button>
+                        {% if app.url_descarga and not app.url_descarga.startswith('error') %}
+                            <a href="{{ app.url_descarga }}" class="download-btn" target="_blank">📥 Descargar Código (.cs)</a>
+                        {% else %}
+                            <button class="download-btn" style="opacity: 0.6; cursor: not-allowed;" disabled>✓ Instalado en Diamant OS</button>
+                        {% endif %}
+                        
                         {% if usuario == app.autor %}
                             <a href="/eliminar/{{ app.id }}" class="btn-delete" title="Eliminar Software">🗑️</a>
                         {% endif %}
@@ -646,8 +709,8 @@ namespace DiamantApps
         function switchTab(viewName) {
             document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
             
-            if(event && event.target) {
-                event.target.classList.add('active');
+            if(window.event && window.event.target) {
+                window.event.target.classList.add('active');
             }
 
             if (viewName === 'tienda') {
@@ -659,7 +722,6 @@ namespace DiamantApps
             }
         }
 
-        // 🔥 MANEJO INTERNO DEL MODAL CYBERPUNK
         function showErrorModal(message) {
             document.getElementById('errorConsoleMessage').innerText = message;
             document.getElementById('errorModalOverlay').classList.add('active');
@@ -669,7 +731,6 @@ namespace DiamantApps
             document.getElementById('errorModalOverlay').classList.remove('active');
         }
 
-        // Leer variables heredadas desde Flask si redirige de vuelta con un error
         window.addEventListener('DOMContentLoaded', () => {
             const urlParams = new URLSearchParams(window.location.search);
             if (urlParams.has('error_review')) {
