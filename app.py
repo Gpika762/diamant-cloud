@@ -16,6 +16,9 @@ UPDATES_DIR = 'updates'  # Carpeta donde guardarás el archivo update.zip en el 
 
 OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
 
+# 🔒 CONTRASENIA ADMINISTRADOR PARA MANDAR LA UPDATE DESDE LA WEB
+ADMIN_PASSWORD_UPDATE = "diamant_admin_os_2026"
+
 # 🌟 CONFIGURACIÓN DE CLOUDINARY
 cloudinary.config( 
     cloud_name = "dwoaq0vf6", 
@@ -54,7 +57,7 @@ def inicializar_base_datos():
     # Asegura que exista la carpeta para tus archivos de actualización física
     if not os.path.exists(UPDATES_DIR):
         os.makedirs(UPDATES_DIR)
-        # Inicializamos con tu versión de desarrollo actual
+        # Inicializamos con tu versión de desarrollo actual real
         with open(os.path.join(UPDATES_DIR, 'version.txt'), 'w') as f:
             f.write("1.0.0 bf3")
 
@@ -99,6 +102,78 @@ def descargar_update_ota():
         return send_from_directory(UPDATES_DIR, 'update.zip', as_attachment=True)
     except Exception as e:
         return jsonify({"error": "El archivo de actualización no está disponible en el servidor."}), 404
+
+
+@app.route('/panel_update', methods=['GET'])
+def panel_update():
+    """Muestra una página web con diseño minimalista para subir la actualización desde el navegador"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Diamant OS - Panel de Actualizaciones OTA</title>
+        <style>
+            body { font-family: 'Segoe UI', sans-serif; background: #f4f5f7; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+            .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 400px; }
+            h2 { color: #4285F4; margin-top: 0; text-align: center; }
+            label { font-weight: 600; color: #333; font-size: 14px; }
+            input, button { width: 100%; padding: 12px; margin: 8px 0 18px 0; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; font-size: 14px; }
+            button { background: #4285F4; color: white; border: none; font-weight: bold; cursor: pointer; margin-top: 5px; transition: background 0.2s; }
+            button:hover { background: #2b72e2; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>🚀 Lanzar Update de Diamant OS</h2>
+            <form action="/subir_update" method="POST" enctype="multipart/form-data">
+                <label>Nueva Versión (ej: 1.0.0 bf4):</label>
+                <input type="text" name="nueva_version" placeholder="1.0.0 bf4" required>
+                
+                <label>Archivo de Actualización (update.zip):</label>
+                <input type="file" name="archivo_zip" accept=".zip" required>
+                
+                <label>Clave de Desarrollador:</label>
+                <input type="password" name="admin_key" placeholder="Contraseña de admin" required>
+                
+                <button type="submit">Publicar Actualización OTA</button>
+            </form>
+        </div>
+    </body>
+    </html>
+    '''
+
+
+@app.route('/subir_update', methods=['POST'])
+def subir_update():
+    """Recibe el formulario, guarda el archivo .zip y reescribe la nueva versión en la nube"""
+    version = request.form.get('nueva_version')
+    clave = request.form.get('admin_key')
+    archivo = request.files.get('archivo_zip')
+
+    if clave != ADMIN_PASSWORD_UPDATE:
+        return '<script>alert("❌ Clave de desarrollador incorrecta."); window.history.back();</script>'
+
+    if not version or not archivo or archivo.filename == '':
+        return '<script>alert("❌ Faltan datos o el archivo zip no es válido."); window.history.back();</script>'
+
+    try:
+        # Guardar el binario directamente reemplazando el archivo anterior
+        ruta_zip = os.path.join(UPDATES_DIR, 'update.zip')
+        archivo.save(ruta_zip)
+
+        # Escribir el nuevo tag de versión en version.txt
+        ruta_version = os.path.join(UPDATES_DIR, 'version.txt')
+        with open(ruta_version, 'w') as f:
+            f.write(version.strip())
+
+        return f'''
+        <script>
+            alert("✨ ¡Diamant OS Actualizado en la Nube!\\n\\nNueva versión activa: {version}\\nEl archivo update.zip se guardó correctamente.");
+            window.location.href = "/";
+        </script>
+        '''
+    except Exception as e:
+        return f'<script>alert("⚠️ Error crítico al almacenar los ficheros: {str(e)}"); window.history.back();</script>'
 
 # =====================================================================
 
