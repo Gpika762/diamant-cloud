@@ -121,7 +121,6 @@ def app_actualizacion():
         return Response("error|Falta el parametro app", status=400, mimetype='text/plain')
     
     # Repositorio de la versión oficial del Ecosistema de aplicaciones
-    # Aquí puedes cambiar manualmente las versiones y los zips de descarga reales cuando compiles parches
     ecosistema_apps = {
         "bloc_notas": {
             "version": "1.2.0",
@@ -139,7 +138,6 @@ def app_actualizacion():
     
     app_info = ecosistema_apps.get(id_app.lower().strip())
     if app_info:
-        # Formato optimizado para el lector asíncrono C#: "Version|URL"
         respuesta_plana = f"{app_info['version']}|{app_info['url']}"
         return Response(respuesta_plana, mimetype='text/plain')
     
@@ -159,7 +157,6 @@ def check_diamant_account():
     datos = request.json or {}
     cuenta = datos.get('cuenta', '').strip().lower()
     
-    # Asegurar que manejamos el formato limpio sin importar si el C# manda solo el prefijo o el correo entero
     if not cuenta.endswith('@diamantaccount.com'):
         username_limpio = cuenta
     else:
@@ -254,6 +251,69 @@ def registrar_diamant_account():
         
     return jsonify({"status": "error", "message": "El identificador de cuenta ya se encuentra ocupado."}), 409
 
+
+# =====================================================================
+# 👥 NUEVO: PANEL VISUAL DE ADMINISTRACIÓN DE CUENTAS DEL KERNEL
+# =====================================================================
+
+@app.route('/panel_cuentas', methods=['GET'])
+def panel_cuentas():
+    """Muestra una interfaz web estilizada para ver los Diamant Accounts registrados"""
+    conexion = sqlite3.connect(DB_PATH)
+    cursor = conexion.cursor()
+    cursor.execute('SELECT username, correo_recuperacion FROM usuarios ORDER BY username ASC')
+    lista_usuarios = cursor.fetchall()
+    conexion.close()
+    
+    filas_tabla = ""
+    for user in lista_usuarios:
+        correo_rec = user[1] if user[1] else '<span style="color: #ecc94b;">⚠️ Sin correo asignado</span>'
+        filas_tabla += f"""
+        <tr>
+            <td>👤 {user[0]}@diamantaccount.com</td>
+            <td>📧 {correo_rec}</td>
+        </tr>
+        """
+        
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Diamant OS - Panel de Usuarios</title>
+        <style>
+            body {{ font-family: 'Segoe UI', sans-serif; background: #121824; color: #f3f4f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }}
+            .container {{ background: #1a2333; padding: 35px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); width: 550px; border: 1px solid #2d3d5a; }}
+            h2 {{ color: #3b82f6; margin-top: 0; text-align: center; font-size: 24px; letter-spacing: 0.5px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; text-align: left; }}
+            th, td {{ padding: 14px; border-bottom: 1px solid #2d3d5a; font-size: 14px; }}
+            th {{ background: #233047; color: #9ca3af; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }}
+            tr:hover {{ background: #222e44; }}
+            .btn-volver {{ display: inline-block; width: 100%; text-align: center; padding: 12px; margin-top: 25px; background: #3b82f6; color: white; text-decoration: none; font-weight: bold; border-radius: 8px; font-size: 14px; box-sizing: border-box; transition: background 0.2s; }}
+            .btn-volver:hover {{ background: #2563eb; }}
+            .count-badge {{ background: #2563eb; color: white; padding: 3px 8px; border-radius: 20px; font-size: 12px; margin-left: 8px; vertical-align: middle; }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h2>👥 Diamant Accounts Activos <span class="count-badge">{len(lista_usuarios)}</span></h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Identidad Kernel</th>
+                        <th>Correo de Respaldo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {filas_tabla if filas_tabla else '<tr><td colspan="2" style="text-align:center; color:#6b7280;">No hay cuentas vinculadas en la nube aún.</td></tr>'}
+                </tbody>
+            </table>
+            <a href="/" class="btn-volver">Volver a Diamant Store</a>
+        </div>
+    </body>
+    </html>
+    '''
+
+
 # =====================================================================
 
 
@@ -310,11 +370,9 @@ def subir_update():
         return '<script>alert("❌ Faltan datos o el archivo zip no es válido."); window.history.back();</script>'
 
     try:
-        # Guardar el binario directamente reemplazando el archivo anterior
         ruta_zip = os.path.join(UPDATES_DIR, 'update.zip')
         archivo.save(ruta_zip)
 
-        # Escribir el nuevo tag de versión en version.txt
         ruta_version = os.path.join(UPDATES_DIR, 'version.txt')
         with open(ruta_version, 'w') as f:
             f.write(version.strip())
