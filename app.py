@@ -45,10 +45,12 @@ def inicializar_base_datos():
         )
     ''')
     
+    # 💾 TABLA ACTUALIZADA: Agregamos correo_recuperacion para el Diamant Account
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             username TEXT PRIMARY KEY,
-            password TEXT NOT NULL
+            password TEXT NOT NULL,
+            correo_recuperacion TEXT
         )
     ''')
     conexion.commit()
@@ -102,6 +104,157 @@ def descargar_update_ota():
         return send_from_directory(UPDATES_DIR, 'update.zip', as_attachment=True)
     except Exception as e:
         return jsonify({"error": "El archivo de actualización no está disponible en el servidor."}), 404
+
+
+# =====================================================================
+# 📱 REQUERIMIENTO 1: ENDPOINT DE ACTUALIZACIÓN DE APPS INDIVIDUALES
+# =====================================================================
+
+@app.route('/appactualizacion', methods=['GET'])
+def app_actualizacion():
+    """
+    Ruta para que Diamant Store consulte la última versión estable de una app del ecosistema.
+    Ejemplo de llamada: /appactualizacion?app=bloc_notas
+    """
+    id_app = request.args.get('app')
+    if not id_app:
+        return Response("error|Falta el parametro app", status=400, mimetype='text/plain')
+    
+    # Repositorio de la versión oficial del Ecosistema de aplicaciones
+    # Aquí puedes cambiar manualmente las versiones y los zips de descarga reales cuando compiles parches
+    ecosistema_apps = {
+        "bloc_notas": {
+            "version": "1.2.0",
+            "url": "https://diamant-cloud.onrender.com/downloads/bloc_notas.zip"
+        },
+        "calculadora": {
+            "version": "1.0.5",
+            "url": "https://diamant-cloud.onrender.com/downloads/calculadora.zip"
+        },
+        "diamant_store": {
+            "version": "2.0.1",
+            "url": "https://diamant-cloud.onrender.com/downloads/store.zip"
+        }
+    }
+    
+    app_info = ecosistema_apps.get(id_app.lower().strip())
+    if app_info:
+        # Formato optimizado para el lector asíncrono C#: "Version|URL"
+        respuesta_plana = f"{app_info['version']}|{app_info['url']}"
+        return Response(respuesta_plana, mimetype='text/plain')
+    
+    return Response("error|Aplicacion no registrada en el ecosistema Kernel", status=404, mimetype='text/plain')
+
+
+# =====================================================================
+# 🔐 REQUERIMIENTO 2: GESTIÓN CENTRALIZADA DIAMANT ACCOUNT EN LA NUBE
+# =====================================================================
+
+@app.route('/api/diamant_account/check', methods=['POST'])
+def check_diamant_account():
+    """
+    Ruta que el C# llamará en segundo plano al escribir el usuario.
+    Verifica si la identidad @diamantaccount.com existe.
+    """
+    datos = request.json or {}
+    cuenta = datos.get('cuenta', '').strip().lower()
+    
+    # Asegurar que manejamos el formato limpio sin importar si el C# manda solo el prefijo o el correo entero
+    if not cuenta.endswith('@diamantaccount.com'):
+        username_limpio = cuenta
+    else:
+        username_limpio = cuenta.replace('@diamantaccount.com', '')
+        
+    if not username_limpio:
+        return jsonify({"status": "invalid", "message": "Nombre de cuenta vacío"}), 400
+
+    conexion = sqlite3.connect(DB_PATH)
+    cursor = conexion.cursor()
+    cursor.execute('SELECT username FROM usuarios WHERE username = ?', (username_limpio,))
+    resultado = cursor.fetchone()
+    conexion.close()
+
+    if resultado:
+        return jsonify({
+            "status": "exists", 
+            "cuenta_completa": f"{username_limpio}@diamantaccount.com",
+            "message": "La cuenta existe. Proceder al login."
+        }), 200
+    else:
+        return jsonify({
+            "status": "not_found", 
+            "cuenta_completa": f"{username_limpio}@diamantaccount.com",
+            "message": "La cuenta no existe. El telefono puede ofrecer registrarla."
+        }), 200
+
+
+@app.route('/api/diamant_account/auth', methods=['POST'])
+def auth_diamant_account():
+    """
+    Inicia sesión de forma remota desde el sistema operativo C#.
+    Maneja contraseñas seguras mediante hashes.
+    """
+    datos = request.json or {}
+    cuenta = datos.get('cuenta', '').strip().lower()
+    password = datos.get('password', '')
+    
+    username_limpio = cuenta.replace('@diamantaccount.com', '') if '@diamantaccount.com' in cuenta else cuenta
+
+    conexion = sqlite3.connect(DB_PATH)
+    cursor = conexion.cursor()
+    cursor.execute('SELECT password, correo_recuperacion FROM usuarios WHERE username = ?', (username_limpio,))
+    resultado = cursor.fetchone()
+    conexion.close()
+
+    if resultado and check_password_hash(resultado[0], password):
+        return jsonify({
+            "auth": True,
+            "username": username_limpio,
+            "cuenta": f"{username_limpio}@diamantaccount.com",
+            "correo_respaldo": resultado[1] or "No asignado"
+        }), 200
+        
+    return jsonify({"auth": False, "message": "Credenciales incorrectas para Diamant Account"}), 401
+
+
+@app.route('/api/diamant_account/register', methods=['POST'])
+def registrar_diamant_account():
+    """
+    Crea dinámicamente un nuevo Diamant Account vinculándole un correo real de recuperación.
+    """
+    datos = request.json or {}
+    cuenta = datos.get('cuenta', '').strip().lower()
+    password = datos.get('password', '')
+    correo_respaldo = datos.get('correo_respaldo', '').strip()
+
+    username_limpio = cuenta.replace('@diamantaccount.com', '') if '@diamantaccount.com' in cuenta else cuenta
+
+    if not username_limpio or not password:
+        return jsonify({"status": "error", "message": "Campos obligatorios incompletos"}), 400
+
+    conexion = sqlite3.connect(DB_PATH)
+    cursor = conexion.cursor()
+    try:
+        password_encriptada = generate_password_hash(password)
+        cursor.execute('INSERT INTO usuarios (username, password, correo_recuperacion) VALUES (?, ?, ?)', 
+                       (username_limpio, password_encriptada, correo_respaldo))
+        conexion.commit()
+        exito = True
+    except sqlite3.IntegrityError:
+        exito = False
+    finally:
+        conexion.close()
+
+    if exito:
+        return jsonify({
+            "status": "created",
+            "cuenta": f"{username_limpio}@diamantaccount.com",
+            "message": "¡Cuenta del Kernel creada con éxito en la nube!"
+        }), 201
+        
+    return jsonify({"status": "error", "message": "El identificador de cuenta ya se encuentra ocupado."}), 409
+
+# =====================================================================
 
 
 @app.route('/panel_update', methods=['GET'])
@@ -175,8 +328,6 @@ def subir_update():
     except Exception as e:
         return f'<script>alert("⚠️ Error crítico al almacenar los ficheros: {str(e)}"); window.history.back();</script>'
 
-# =====================================================================
-
 
 @app.route('/api/apps', methods=['GET'])
 def obtener_apps():
@@ -228,7 +379,6 @@ def login():
     
     if accion == "registro":
         try:
-            # 🔐 Encriptar contraseña antes de guardarla
             password_encriptada = generate_password_hash(password)
             cursor.execute('INSERT INTO usuarios (username, password) VALUES (?, ?)', (username, password_encriptada))
             conexion.commit()
@@ -238,7 +388,6 @@ def login():
     else:
         cursor.execute('SELECT password FROM usuarios WHERE username = ?', (username,))
         resultado = cursor.fetchone()
-        # 🔐 Verificar hash seguro de la contraseña
         if resultado and check_password_hash(resultado[0], password):
             session['usuario'] = username
             
