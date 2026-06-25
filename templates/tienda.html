@@ -28,7 +28,7 @@
             padding: 0;
         }
 
-        /* 🗺️ BARRA DE NAVEGACIÓN SUPERIOR ESTILO ONE UI */
+        /* 🗺️ BARRA DE NAVEGACIÓN SUPERIOR */
         nav {
             background-color: rgba(22, 23, 29, 0.8);
             backdrop-filter: blur(12px);
@@ -82,7 +82,7 @@
             padding: 8px 16px;
             border-radius: 10px;
             cursor: pointer;
-            transition: all 0.2s;
+            transition: all 0.25s ease;
         }
 
         .tab-btn:hover {
@@ -139,7 +139,7 @@
             margin: 0;
         }
 
-        /* 📦 PANEL EXCLUSIVO MONITOR OTA (SISTEMA OPERATIVO) */
+        /* 📦 PANEL EXCLUSIVO MONITOR OTA */
         .ota-monitor-card {
             background: linear-gradient(135deg, rgba(255, 149, 0, 0.1), rgba(22, 23, 29, 0.6));
             border: 1px solid rgba(255, 149, 0, 0.25);
@@ -149,6 +149,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
+            box-shadow: 0 4px 20px rgba(255, 149, 0, 0.05);
         }
 
         .ota-info-layout {
@@ -162,7 +163,7 @@
             height: 45px;
             background-color: rgba(255, 149, 0, 0.15);
             color: var(--ota-color);
-            font-size: 20px;
+            font-size: 18px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -200,9 +201,9 @@
         }
 
         .app-card:hover {
-            transform: translateY(-2px);
+            transform: translateY(-4px);
             border-color: #313543;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            box-shadow: 0 12px 30px rgba(0,0,0,0.3);
         }
 
         .card-top {
@@ -237,16 +238,15 @@
         }
 
         .app-meta {
-            font-size: 12px;
-            color: var(--text-muted);
             display: flex;
             align-items: center;
             gap: 6px;
+            margin-top: 2px;
         }
 
         .badge {
             background-color: rgba(255,255,255,0.08);
-            padding: 2px 6px;
+            padding: 2px 8px;
             border-radius: 6px;
             font-size: 11px;
             color: #d1d5db;
@@ -254,13 +254,14 @@
 
         .version {
             color: var(--success);
+            font-size: 12px;
             font-weight: 600;
         }
 
         .app-desc {
             color: #a3aab6;
             font-size: 13.5px;
-            line-height: 1.4;
+            line-height: 1.5;
             margin: 0 0 20px 0;
             flex-grow: 1;
         }
@@ -284,7 +285,7 @@
             border: 1px solid rgba(255,255,255,0.03);
         }
 
-        .download-btn:hover {
+        .download-btn:hover:not(:disabled) {
             background-color: var(--primary);
             box-shadow: 0 4px 12px rgba(10, 110, 242, 0.3);
         }
@@ -315,11 +316,15 @@
             border: 1px solid var(--border);
             border-radius: 24px;
             padding: 30px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.2);
         }
 
         .ide-sidebar {
             border-right: 1px solid var(--border);
             padding-right: 20px;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
 
         .form-group {
@@ -328,29 +333,30 @@
 
         label {
             display: block;
-            font-size: 13px;
-            font-weight: 600;
+            font-size: 12px;
+            font-weight: 700;
             color: var(--text-muted);
-            margin-bottom: 6px;
+            margin-bottom: 8px;
             text-transform: uppercase;
-            letter-spacing: 0.5px;
+            letter-spacing: 0.8px;
         }
 
         input, select, textarea {
             width: 100%;
-            padding: 12px;
+            padding: 12px 16px;
             background-color: var(--bg-input);
             border: 1px solid var(--border);
             border-radius: 12px;
             color: var(--text-main);
             font-size: 14px;
             box-sizing: border-box;
-            transition: border-color 0.2s;
+            transition: all 0.2s ease;
         }
 
         input:focus, select:focus, textarea:focus {
             outline: none;
             border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(10, 110, 242, 0.25);
         }
 
         /* Editor Terminal Code Style */
@@ -367,6 +373,11 @@
             line-height: 1.6;
         }
 
+        .code-editor:focus {
+            border-color: #00ca71;
+            box-shadow: 0 0 0 3px rgba(0, 202, 113, 0.15);
+        }
+
         .submit-btn {
             background-color: var(--primary);
             color: white;
@@ -377,7 +388,7 @@
             font-size: 15px;
             font-weight: 700;
             cursor: pointer;
-            transition: background-color 0.2s, box-shadow 0.2s;
+            transition: all 0.2s ease;
             margin-top: 10px;
         }
 
@@ -395,6 +406,7 @@
             max-width: 400px;
             margin: 50px auto;
             text-align: center;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
         }
 
         .auth-btn-register {
@@ -425,7 +437,7 @@
             border-radius: 20px;
         }
 
-        /* 🚨 MODAL DE COMPILACIÓN CYBERPUNK INTEGRADO */
+        /* 🚨 MODAL DE COMPILACIÓN CYBERPUNK */
         .cyber-modal-overlay {
             position: fixed;
             top: 0;
@@ -593,7 +605,7 @@
                                     <span class="badge">{{ app.categoria }}</span>
                                     <span class="version">v{{ app.version }}</span>
                                 </div>
-                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 3px;">Autor: {{ app.autor }}</div>
+                                <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Autor: {{ app.autor }}</div>
                             </div>
                         </div>
                         <p class="app-desc">{{ app.descripcion }}</p>
@@ -620,7 +632,6 @@
         </div>
 
         <div id="view-developer" class="hidden">
-            
             {% if not usuario %}
                 <div class="auth-box">
                     <h2 style="margin-top: 0; font-size: 24px;">ID de Ingeniero Diamant</h2>
@@ -642,39 +653,41 @@
                     <p class="sub">Escribe tus algoritmos y compila de forma directa en el almacenamiento global.</p>
                 </div>
 
-                <div class="ide-container">
-                    <div class="ide-sidebar">
-                        <form id="uploadForm" action="/subir" method="POST">
-                            <div class="form-group">
-                                <label>Nombre del Software</label>
-                                <input type="text" name="nombre" placeholder="Ej: Rat_Football" required>
-                            </div>
+                <form id="uploadForm" action="/subir" method="POST">
+                    <div class="ide-container">
+                        <div class="ide-sidebar">
+                            <div>
+                                <div class="form-group">
+                                    <label>Nombre del Software</label>
+                                    <input type="text" name="nombre" placeholder="Ej: Rat_Football" required>
+                                </div>
 
-                            <div class="form-group">
-                                <label>Versión del Paquete</label>
-                                <input type="text" name="version" value="1.0.0" required>
-                            </div>
+                                <div class="form-group">
+                                    <label>Versión del Paquete</label>
+                                    <input type="text" name="version" value="1.0.0" required>
+                                </div>
 
-                            <div class="form-group">
-                                <label>Categoría</label>
-                                <select name="categoria">
-                                    <option value="Juegos">🎮 Juegos</option>
-                                    <option value="Sistema">⚙️ Sistema / Kernel</option>
-                                    <option value="Herramientas">🧮 Herramientas</option>
-                                </select>
-                            </div>
+                                <div class="form-group">
+                                    <label>Categoría</label>
+                                    <select name="categoria">
+                                        <option value="Juegos">🎮 Juegos</option>
+                                        <option value="Sistema">⚙️ Sistema / Kernel</option>
+                                        <option value="Herramientas">🧮 Herramientas</option>
+                                    </select>
+                                </div>
 
-                            <div class="form-group">
-                                <label>Descripción de Funciones</label>
-                                <textarea name="descripcion" placeholder="Explica el propósito de este módulo..." rows="3" required></textarea>
+                                <div class="form-group">
+                                    <label>Descripción de Funciones</label>
+                                    <textarea name="descripcion" placeholder="Explica el propósito de este módulo..." rows="4" required></textarea>
+                                </div>
                             </div>
 
                             <button type="submit" class="submit-btn">🚀 Compilar y Publicar</button>
-                    </div>
+                        </div>
 
-                    <div style="display: flex; flex-direction: column;">
-                        <label>Editor de Código Fuente C# (Diamant System Compliant)</label>
-                        <textarea name="codigo_fuente" class="code-editor" required>using System;
+                        <div style="display: flex; flex-direction: column;">
+                            <label>Editor de Código Fuente C# (Diamant System Compliant)</label>
+                            <textarea name="codigo_fuente" class="code-editor" required>using System;
 using System.Windows.Forms;
 using System.Drawing;
 
@@ -697,9 +710,9 @@ namespace DiamantApps
         }
     }
 }</textarea>
+                        </div>
                     </div>
-                    </form>
-                </div>
+                </form>
             {% endif %}
         </div>
 
