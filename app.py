@@ -1,18 +1,21 @@
 import os
-import sqlite3
 import json
 import requests  # Necesario para llamar a la API de OpenRouter
 import io        # Requerido para codificar los strings a bytes en memoria
 import cloudinary
 import cloudinary.uploader  # 🌟 El motor de Cloudinary
+import psycopg2             # 🐘 Reemplazamos sqlite3 por PostgreSQL para persistencia real
+from psycopg2.extras import DictCursor
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash # Para encriptar contraseñas
 
 app = Flask(__name__)
 app.secret_key = "diamant_secret_key_os_cloud_123"
 
-DB_PATH = 'diamant_cloud.db'
-UPDATES_DIR = 'updates'  # Carpeta donde guardarás el archivo update.zip en el servidor
+# 🐘 CONFIGURACIÓN DE POSTGRESQL EXTERNA (Neon.tech, Supabase, etc.)
+# En producción, agrega la variable de entorno DATABASE_URL en Render.
+# Dejamos un string de respaldo por si pruebas localmente.
+DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://usuario:password@localhost:5432/diamant_db")
 
 OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
 
@@ -28,12 +31,14 @@ cloudinary.config(
 )
 
 def inicializar_base_datos():
-    conexion = sqlite3.connect(DB_PATH)
+    """Crea las tablas en PostgreSQL si no existen utilizando sintaxis compatible"""
+    conexion = psycopg2.connect(DATABASE_URL)
     cursor = conexion.cursor()
     
+    # Tabla aplicaciones modificada a sintaxis PostgreSQL (SERIAL en vez de AUTOINCREMENT)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS aplicaciones (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id SERIAL PRIMARY KEY,
             nombre TEXT NOT NULL,
             version TEXT NOT NULL,
             descripcion TEXT,
@@ -41,11 +46,11 @@ def inicializar_base_datos():
             codigo_fuente TEXT,
             autor TEXT,
             url_descarga TEXT,
-            fecha_subida DATETIME DEFAULT CURRENT_TIMESTAMP
+            fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
-    # 💾 TABLA ACTUALIZADA: Agregamos correo_recuperacion para el Diamant Account
+    # Tabla usuarios para Diamant Account
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
             username TEXT PRIMARY KEY,
@@ -53,15 +58,27 @@ def inicializar_base_datos():
             correo_recuperacion TEXT
         )
     ''')
-    conexion.commit()
-    conexion.close()
+    
+    # 📝 TABLA EXTRA: Para guardar la versión del OS y la URL del zip de forma persistente
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ota_version (
+            id INTEGER PRIMARY KEY,
+            version TEXT NOT NULL,
+            url_zip TEXT NOT NULL
+        )
+    ''')
+    
+    # Insertar versión por defecto si la tabla de control OTA está vacía
+    cursor.execute('SELECT COUNT(*) FROM ota_version')
+    if cursor.fetchone()[0] == 0:
+        cursor.execute('''
+            INSERT INTO ota_version (id, version, url_zip) 
+            VALUES (1, '1.0.0 bf3', 'https://diamant-cloud.onrender.com/')
+        ''')
 
-    # Asegura que exista la carpeta para tus archivos de actualización física
-    if not os.path.exists(UPDATES_DIR):
-        os.makedirs(UPDATES_DIR)
-        # Inicializamos con tu versión de desarrollo actual real
-        with open(os.path.join(UPDATES_DIR, 'version.txt'), 'w') as f:
-            f.write("1.0.0 bf3")
+    conexion.commit()
+    cursor.close()
+    conexion.close()
 
 
 # =====================================================================
@@ -70,27 +87,33 @@ def inicializar_base_datos():
 
 @app.route('/version.txt', methods=['GET'])
 def obtener_version_ota():
-    """Devuelve la versión actual del OS en texto plano limpio para el C#"""
+    """Devuelve la versión actual del OS directo desde PostgreSQL (Persistente)"""
     try:
-        ruta_version = os.path.join(UPDATES_DIR, 'version.txt')
-        if os.path.exists(ruta_version):
-            with open(ruta_version, 'r') as f:
-                version = f.read().strip()
-            return Response(version, mimetype='text/plain')
-        return Response("1.0.0 bf3", mimetype='text/plain')
+        conexion = psycopg2.connect(DATABASE_URL)
+        cursor = conexion.cursor()
+        cursor.execute('SELECT version FROM ota_version WHERE id = 1')
+        resultado = cursor.fetchone()
+        cursor.close()
+        conexion.close()
+        
+        version = resultado[0] if resultado else "1.0.0 bf3"
+        return Response(version, mimetype='text/plain')
     except Exception as e:
-        return Response(f"Error leyendo version: {str(e)}", status=500, mimetype='text/plain')
+        return Response(f"Error leyendo version desde DB: {str(e)}", status=500, mimetype='text/plain')
 
 
 @app.route('/set_version', methods=['POST'])
 def cambiar_version_ota():
-    """Ruta útil para que cambies la versión en el servidor de forma remota"""
+    """Ruta útil para cambiar rápidamente la versión en la base de datos externa"""
     nueva_version = request.form.get('version')
     if nueva_version:
         try:
-            ruta_version = os.path.join(UPDATES_DIR, 'version.txt')
-            with open(ruta_version, 'w') as f:
-                f.write(nueva_version.strip())
+            conexion = psycopg2.connect(DATABASE_URL)
+            cursor = conexion.cursor()
+            cursor.execute('UPDATE ota_version SET version = ? WHERE id = 1', (nueva_version.strip(),))
+            conexion.commit()
+            cursor.close()
+            conexion.close()
             return jsonify({"status": "ok", "version_guardada": nueva_version}), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
@@ -99,11 +122,22 @@ def cambiar_version_ota():
 
 @app.route('/update.zip', methods=['GET'])
 def descargar_update_ota():
-    """Descarga el paquete físico real .zip que procesará tu AjustesControl en C#"""
+    """Redirecciona al binario update.zip real alojado permanentemente en Cloudinary"""
     try:
-        return send_from_directory(UPDATES_DIR, 'update.zip', as_attachment=True)
+        conexion = psycopg2.connect(DATABASE_URL)
+        cursor = conexion.cursor()
+        cursor.execute('SELECT url_zip FROM ota_version WHERE id = 1')
+        resultado = cursor.fetchone()
+        cursor.close()
+        conexion.close()
+        
+        if resultado and resultado[0] != "https://diamant-cloud.onrender.com/":
+            # Redireccionamos el cliente C# directamente a la descarga segura de Cloudinary
+            return redirect(resultado[0])
+            
+        return jsonify({"error": "El archivo de actualización no está configurado en el almacenamiento externo."}), 404
     except Exception as e:
-        return jsonify({"error": "El archivo de actualización no está disponible en el servidor."}), 404
+        return jsonify({"error": f"Error recuperando OTA de almacenamiento: {str(e)}"}), 500
 
 
 # =====================================================================
@@ -113,43 +147,40 @@ def descargar_update_ota():
 @app.route('/appactualizacion', methods=['GET'])
 def app_actualizacion():
     """
-    Ruta optimizada para C#. Consulta la base de datos real para las apps subidas.
-    Soporta búsquedas con espacios, guiones bajos o mayúsculas.
-    Ejemplo: /appactualizacion?app=Rat Football League
+    Ruta optimizada para C#. Consulta la base de datos PostgreSQL externa.
     """
     id_app = request.args.get('app')
     if not id_app:
         return Response("error|Falta el parametro app", status=400, mimetype='text/plain')
     
-    # Limpiamos el query del parámetro para que no falle por formatos
     nombre_limpio = id_app.strip().lower()
     nombre_con_guiones = nombre_limpio.replace(" ", "_")
 
-    # 1. Intentar buscar en la base de datos SQLite (las que vas subiendo desde la web)
+    # 1. Intentar buscar en PostgreSQL externa
     try:
-        conexion = sqlite3.connect(DB_PATH)
+        conexion = psycopg2.connect(DATABASE_URL)
         cursor = conexion.cursor()
         
-        # Buscamos ignorando mayúsculas/minúsculas y comparando ambas variantes (con o sin espacios)
+        # Buscamos ignorando mayúsculas/minúsculas empleando la función LOWER nativa
         cursor.execute('''
             SELECT version, url_descarga FROM aplicaciones 
-            WHERE LOWER(nombre) = ? OR LOWER(nombre) = ?
+            WHERE LOWER(nombre) = %s OR LOWER(nombre) = %s
             ORDER BY fecha_subida DESC LIMIT 1
         ''', (nombre_limpio, nombre_con_guiones))
         
         resultado = cursor.fetchone()
+        cursor.close()
         conexion.close()
 
         if resultado:
             version_db = resultado[0]
             url_db = resultado[1] if resultado[1] else "https://diamant-cloud.onrender.com/"
-            # Retorna el formato limpio "version|url" que espera tu C# (StreamReader.ReadLine)
             return Response(f"{version_db}|{url_db}", mimetype='text/plain')
 
     except Exception as db_err:
-        print(f"Error consultando la app en la DB: {db_err}")
+        print(f"Error consultando la app en PostgreSQL: {db_err}")
 
-    # 2. Diccionario de Respaldo (Ecosistema base por si no se han subido apps)
+    # 2. Diccionario de Respaldo (Ecosistema base estático)
     ecosistema_apps = {
         "bloc_notas": {
             "version": "1.2.0",
@@ -165,7 +196,6 @@ def app_actualizacion():
         }
     }
     
-    # Buscamos en el diccionario usando las dos variantes limpias
     app_info = ecosistema_apps.get(nombre_limpio) or ecosistema_apps.get(nombre_con_guiones)
     
     if app_info:
@@ -192,10 +222,11 @@ def check_diamant_account():
     if not username_limpio:
         return jsonify({"status": "invalid", "message": "Nombre de cuenta vacío"}), 400
 
-    conexion = sqlite3.connect(DB_PATH)
+    conexion = psycopg2.connect(DATABASE_URL)
     cursor = conexion.cursor()
-    cursor.execute('SELECT username FROM usuarios WHERE username = ?', (username_limpio,))
+    cursor.execute('SELECT username FROM usuarios WHERE username = %s', (username_limpio,))
     resultado = cursor.fetchone()
+    cursor.close()
     conexion.close()
 
     if resultado:
@@ -220,10 +251,11 @@ def auth_diamant_account():
     
     username_limpio = cuenta.replace('@diamantaccount.com', '') if '@diamantaccount.com' in cuenta else cuenta
 
-    conexion = sqlite3.connect(DB_PATH)
+    conexion = psycopg2.connect(DATABASE_URL)
     cursor = conexion.cursor()
-    cursor.execute('SELECT password, correo_recuperacion FROM usuarios WHERE username = ?', (username_limpio,))
+    cursor.execute('SELECT password, correo_recuperacion FROM usuarios WHERE username = %s', (username_limpio,))
     resultado = cursor.fetchone()
+    cursor.close()
     conexion.close()
 
     if resultado and check_password_hash(resultado[0], password):
@@ -249,17 +281,18 @@ def registrar_diamant_account():
     if not username_limpio or not password:
         return jsonify({"status": "error", "message": "Campos obligatorios incompletos"}), 400
 
-    conexion = sqlite3.connect(DB_PATH)
+    conexion = psycopg2.connect(DATABASE_URL)
     cursor = conexion.cursor()
     try:
         password_encriptada = generate_password_hash(password)
-        cursor.execute('INSERT INTO usuarios (username, password, correo_recuperacion) VALUES (?, ?, ?)', 
+        cursor.execute('INSERT INTO usuarios (username, password, correo_recuperacion) VALUES (%s, %s, %s)', 
                        (username_limpio, password_encriptada, correo_respaldo))
         conexion.commit()
         exito = True
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
         exito = False
     finally:
+        cursor.close()
         conexion.close()
 
     if exito:
@@ -278,10 +311,11 @@ def registrar_diamant_account():
 
 @app.route('/panel_cuentas', methods=['GET'])
 def panel_cuentas():
-    conexion = sqlite3.connect(DB_PATH)
+    conexion = psycopg2.connect(DATABASE_URL)
     cursor = conexion.cursor()
     cursor.execute('SELECT username, correo_recuperacion FROM usuarios ORDER BY username ASC')
     lista_usuarios = cursor.fetchall()
+    cursor.close()
     conexion.close()
     
     filas_tabla = ""
@@ -333,8 +367,6 @@ def panel_cuentas():
     '''
 
 
-# =====================================================================
-
 @app.route('/panel_update', methods=['GET'])
 def panel_update():
     return '''
@@ -375,6 +407,7 @@ def panel_update():
 
 @app.route('/subir_update', methods=['POST'])
 def subir_update():
+    """Sube el binario update.zip de forma segura a Cloudinary y registra la metadata en Postgres"""
     version = request.form.get('nueva_version')
     clave = request.form.get('admin_key')
     archivo = request.files.get('archivo_zip')
@@ -386,40 +419,59 @@ def subir_update():
         return '<script>alert("❌ Faltan datos o el archivo zip no es válido."); window.history.back();</script>'
 
     try:
-        ruta_zip = os.path.join(UPDATES_DIR, 'update.zip')
-        archivo.save(ruta_zip)
+        # ☁️ Novedad: Guardar el update.zip directo en Cloudinary para no perderlo al reiniciarse la nube
+        contenido_zip = archivo.read()
+        archivo_simulado = io.BytesIO(contenido_zip)
+        
+        resultado_cloudinary = cloudinary.uploader.upload(
+            archivo_simulado,
+            folder="diamant_os_updates",
+            resource_type="raw",
+            public_id="update.zip",
+            overwrite=True
+        )
+        url_zip_persistente = resultado_cloudinary['secure_url']
 
-        ruta_version = os.path.join(UPDATES_DIR, 'version.txt')
-        with open(ruta_version, 'w') as f:
-            f.write(version.strip())
+        # Guardamos la nueva versión y el link eterno en nuestra tabla relacional externa
+        conexion = psycopg2.connect(DATABASE_URL)
+        cursor = conexion.cursor()
+        cursor.execute('''
+            UPDATE ota_version 
+            SET version = %s, url_zip = %s 
+            WHERE id = 1
+        ''', (version.strip(), url_zip_persistente))
+        conexion.commit()
+        cursor.close()
+        conexion.close()
 
         return f'''
         <script>
-            alert("✨ ¡Diamant OS Actualizado en la Nube!\\n\\nNueva versión activa: {version}\\nEl archivo update.zip se guardó correctamente.");
+            alert("✨ ¡Diamant OS Actualizado Eternamente!\\n\\nNueva versión activa: {version}\\nEl paquete OTA se distribuyó en Cloudinary de forma persistente.");
             window.location.href = "/";
         </script>
         '''
     except Exception as e:
-        return f'<script>alert("⚠️ Error crítico al almacenar los ficheros: {str(e)}"); window.history.back();</script>'
+        return f'<script>alert("⚠️ Error crítico al almacenar los ficheros OTA: {str(e)}"); window.history.back();</script>'
 
 
 @app.route('/api/apps', methods=['GET'])
 def obtener_apps():
-    conexion = sqlite3.connect(DB_PATH)
-    conexion.row_factory = sqlite3.Row
+    conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
     cursor = conexion.cursor()
     cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, fecha_subida FROM aplicaciones ORDER BY fecha_subida DESC')
     apps = [dict(fila) for fila in cursor.fetchall()]
+    cursor.close()
     conexion.close()
     return jsonify(apps)
 
 
 @app.route('/api/apps/<int:app_id>/codigo', methods=['GET'])
 def obtener_codigo_app(app_id):
-    conexion = sqlite3.connect(DB_PATH)
+    conexion = psycopg2.connect(DATABASE_URL)
     cursor = conexion.cursor()
-    cursor.execute('SELECT codigo_fuente, url_descarga FROM aplicaciones WHERE id = ?', (app_id,))
+    cursor.execute('SELECT codigo_fuente, url_descarga FROM aplicaciones WHERE id = %s', (app_id,))
     resultado = cursor.fetchone()
+    cursor.close()
     conexion.close()
     if resultado:
         return jsonify({
@@ -431,11 +483,11 @@ def obtener_codigo_app(app_id):
 
 @app.route('/', methods=['GET'])
 def pagina_web():
-    conexion = sqlite3.connect(DB_PATH)
-    conexion.row_factory = sqlite3.Row
+    conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
     cursor = conexion.cursor()
     cursor.execute('SELECT * FROM aplicaciones ORDER BY fecha_subida DESC')
     apps = cursor.fetchall()
+    cursor.close()
     conexion.close()
     
     usuario_logueado = session.get('usuario')
@@ -448,23 +500,24 @@ def login():
     password = request.form.get('password')
     accion = request.form.get('accion')
     
-    conexion = sqlite3.connect(DB_PATH)
+    conexion = psycopg2.connect(DATABASE_URL)
     cursor = conexion.cursor()
     
     if accion == "registro":
         try:
             password_encriptada = generate_password_hash(password)
-            cursor.execute('INSERT INTO usuarios (username, password) VALUES (?, ?)', (username, password_encriptada))
+            cursor.execute('INSERT INTO usuarios (username, password) VALUES (%s, %s)', (username, password_encriptada))
             conexion.commit()
             session['usuario'] = username
-        except sqlite3.IntegrityError:
+        except psycopg2.IntegrityError:
             pass 
     else:
-        cursor.execute('SELECT password FROM usuarios WHERE username = ?', (username,))
+        cursor.execute('SELECT password FROM usuarios WHERE username = %s', (username,))
         resultado = cursor.fetchone()
         if resultado and check_password_hash(resultado[0], password):
             session['usuario'] = username
             
+    cursor.close()
     conexion.close()
     return redirect(url_for('pagina_web'))
 
@@ -488,23 +541,17 @@ def subir_app():
     autor = session['usuario']
 
     prompt_ia = f"""
-    Eres un compilador estricto de C# para Diamant OS. Tu única tarea es validar si el código tiene errores de sintaxis reales (como llaves sin cerrar, falta de puntos y coma, falta de la palabra 'class', variables no declaradas o bloques de bucles mal formados).
-    
-    NO intentes corregir el código. Si falta un solo punto y coma o una llave, debes marcarlo como inválido.
-
-    Código C# a evaluar:
-    {codigo}
-    
-    Responde OBLIGATORIAMENTE en este formato JSON puro, sin decoraciones de markdown ni texto extra:
+    Eres un compilador estricto de C# para Diamant OS. Tu única tarea es validar si el código tiene errores de sintaxis reales.
+    Responde OBLIGATORIAMENTE en este formato JSON puro:
     {{
         "valido": false,
-        "error_mensaje": "Detalle del error aquí (línea y qué falta)"
-    }}
-    o si está 100% perfecto:
-    {{
+        "error_mensaje": "Detalle del error"
+    }} o {{
         "valido": true,
         "error_mensaje": ""
     }}
+    Código C# a evaluar:
+    {codigo}
     """
 
     pasa_la_ia = False
@@ -546,7 +593,6 @@ def subir_app():
             else:
                 pasa_la_ia = True
         else:
-            print(f"Error de API OpenRouter: Código {respuesta.status_code}")
             pasa_la_ia = True  
             
     except Exception as e:
@@ -566,20 +612,19 @@ def subir_app():
                 public_id=nombre_archivo_cs,
                 overwrite=True
             )
-            
             url_descarga_final = resultado['secure_url']
             
         except Exception as storage_err:
-            print(f"--- ERROR CRÍTICO CLOUDINARY ---: {storage_err}")
             url_descarga_final = f"error: {str(storage_err)}"
 
-        conexion = sqlite3.connect(DB_PATH)
+        conexion = psycopg2.connect(DATABASE_URL)
         cursor = conexion.cursor()
         cursor.execute('''
             INSERT INTO aplicaciones (nombre, version, descripcion, categoria, codigo_fuente, autor, url_descarga)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
         ''', (nombre, version, descripcion, categoria, codigo, autor, url_descarga_final))
         conexion.commit()
+        cursor.close()
         conexion.close()
         return redirect(url_for('pagina_web'))
 
@@ -596,15 +641,16 @@ def eliminar_app(app_id):
     if 'usuario' not in session:
         return redirect(url_for('pagina_web'))
         
-    conexion = sqlite3.connect(DB_PATH)
+    conexion = psycopg2.connect(DATABASE_URL)
     cursor = conexion.cursor()
-    cursor.execute('SELECT autor FROM aplicaciones WHERE id = ?', (app_id,))
+    cursor.execute('SELECT autor FROM aplicaciones WHERE id = %s', (app_id,))
     resultado = cursor.fetchone()
     
     if resultado and resultado[0] == session['usuario']:
-        cursor.execute('DELETE FROM aplicaciones WHERE id = ?', (app_id,))
+        cursor.execute('DELETE FROM aplicaciones WHERE id = %s', (app_id,))
         conexion.commit()
         
+    cursor.close()
     conexion.close()
     return redirect(url_for('pagina_web'))
 
