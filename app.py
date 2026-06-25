@@ -4,7 +4,7 @@ import requests  # Necesario para llamar a la API de OpenRouter
 import io        # Requerido para codificar los strings a bytes en memoria
 import cloudinary
 import cloudinary.uploader  # 🌟 El motor de Cloudinary
-import psycopg2             # 🐘 Reemplazamos sqlite3 por PostgreSQL para persistencia real
+import psycopg2              # 🐘 Reemplazamos sqlite3 por PostgreSQL para persistencia real
 from psycopg2.extras import DictCursor
 from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_from_directory, Response
 from werkzeug.security import generate_password_hash, check_password_hash # Para encriptar contraseñas
@@ -13,9 +13,8 @@ app = Flask(__name__)
 app.secret_key = "diamant_secret_key_os_cloud_123"
 
 # 🐘 CONFIGURACIÓN DE POSTGRESQL EXTERNA (Neon.tech, Supabase, etc.)
-# En producción, agrega la variable de entorno DATABASE_URL en Render.
-# Dejamos un string de respaldo por si pruebas localmente.
-DATABASE_URL = os.environ.get("DATABASE_URL", "postgresql://usuario:password@localhost:5432/diamant_db")
+# En producción, lee DATABASE_URL desde el entorno de Render de forma estricta.
+DATABASE_URL = os.environ.get("DATABASE_URL")
 
 OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
 
@@ -30,55 +29,65 @@ cloudinary.config(
     secure = True
 )
 
+def conectar_db():
+    """Helper seguro para conectar a la base de datos controlando la ausencia de credenciales"""
+    if not DATABASE_URL:
+        raise ValueError("Error crítico: La variable de entorno DATABASE_URL no está configurada en Render.")
+    return psycopg2.connect(DATABASE_URL)
+
 def inicializar_base_datos():
     """Crea las tablas en PostgreSQL si no existen utilizando sintaxis compatible"""
-    conexion = psycopg2.connect(DATABASE_URL)
-    cursor = conexion.cursor()
-    
-    # Tabla aplicaciones modificada a sintaxis PostgreSQL (SERIAL en vez de AUTOINCREMENT)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS aplicaciones (
-            id SERIAL PRIMARY KEY,
-            nombre TEXT NOT NULL,
-            version TEXT NOT NULL,
-            descripcion TEXT,
-            categoria TEXT,
-            codigo_fuente TEXT,
-            autor TEXT,
-            url_descarga TEXT,
-            fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    # Tabla usuarios para Diamant Account
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            username TEXT PRIMARY KEY,
-            password TEXT NOT NULL,
-            correo_recuperacion TEXT
-        )
-    ''')
-    
-    # 📝 TABLA EXTRA: Para guardar la versión del OS y la URL del zip de forma persistente
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS ota_version (
-            id INTEGER PRIMARY KEY,
-            version TEXT NOT NULL,
-            url_zip TEXT NOT NULL
-        )
-    ''')
-    
-    # Insertar versión por defecto si la tabla de control OTA está vacía
-    cursor.execute('SELECT COUNT(*) FROM ota_version')
-    if cursor.fetchone()[0] == 0:
+    try:
+        conexion = conectar_db()
+        cursor = conexion.cursor()
+        
+        # Tabla aplicaciones modificada a sintaxis PostgreSQL (SERIAL en vez de AUTOINCREMENT)
         cursor.execute('''
-            INSERT INTO ota_version (id, version, url_zip) 
-            VALUES (1, '1.0.0 bf3', 'https://diamant-cloud.onrender.com/')
+            CREATE TABLE IF NOT EXISTS aplicaciones (
+                id SERIAL PRIMARY KEY,
+                nombre TEXT NOT NULL,
+                version TEXT NOT NULL,
+                descripcion TEXT,
+                categoria TEXT,
+                codigo_fuente TEXT,
+                autor TEXT,
+                url_descarga TEXT,
+                fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
         ''')
+        
+        # Tabla usuarios para Diamant Account
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS usuarios (
+                username TEXT PRIMARY KEY,
+                password TEXT NOT NULL,
+                correo_recuperacion TEXT
+            )
+        ''')
+        
+        # 📝 TABLA EXTRA: Para guardar la versión del OS y la URL del zip de forma persistente
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ota_version (
+                id INTEGER PRIMARY KEY,
+                version TEXT NOT NULL,
+                url_zip TEXT NOT NULL
+            )
+        ''')
+        
+        # Insertar versión por defecto si la tabla de control OTA está vacía
+        cursor.execute('SELECT COUNT(*) FROM ota_version')
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO ota_version (id, version, url_zip) 
+                VALUES (1, '1.0.0 bf3', 'https://diamant-cloud.onrender.com/')
+            ''')
 
-    conexion.commit()
-    cursor.close()
-    conexion.close()
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+        print("🐘 Base de datos PostgreSQL inicializada con éxito.")
+    except Exception as e:
+        print(f"❌ Error grave al inicializar la base de datos: {e}")
 
 
 # =====================================================================
@@ -89,7 +98,7 @@ def inicializar_base_datos():
 def obtener_version_ota():
     """Devuelve la versión actual del OS directo desde PostgreSQL (Persistente)"""
     try:
-        conexion = psycopg2.connect(DATABASE_URL)
+        conexion = conectar_db()
         cursor = conexion.cursor()
         cursor.execute('SELECT version FROM ota_version WHERE id = 1')
         resultado = cursor.fetchone()
@@ -108,9 +117,10 @@ def cambiar_version_ota():
     nueva_version = request.form.get('version')
     if nueva_version:
         try:
-            conexion = psycopg2.connect(DATABASE_URL)
+            conexion = conectar_db()
             cursor = conexion.cursor()
-            cursor.execute('UPDATE ota_version SET version = ? WHERE id = 1', (nueva_version.strip(),))
+            # 🔧 CORREGIDO: Se cambió '?' por '%s' para compatibilidad estricta con psycopg2
+            cursor.execute('UPDATE ota_version SET version = %s WHERE id = 1', (nueva_version.strip(),))
             conexion.commit()
             cursor.close()
             conexion.close()
@@ -124,7 +134,7 @@ def cambiar_version_ota():
 def descargar_update_ota():
     """Redirecciona al binario update.zip real alojado permanentemente en Cloudinary"""
     try:
-        conexion = psycopg2.connect(DATABASE_URL)
+        conexion = conectar_db()
         cursor = conexion.cursor()
         cursor.execute('SELECT url_zip FROM ota_version WHERE id = 1')
         resultado = cursor.fetchone()
@@ -158,7 +168,7 @@ def app_actualizacion():
 
     # 1. Intentar buscar en PostgreSQL externa
     try:
-        conexion = psycopg2.connect(DATABASE_URL)
+        conexion = conectar_db()
         cursor = conexion.cursor()
         
         # Buscamos ignorando mayúsculas/minúsculas empleando la función LOWER nativa
@@ -222,25 +232,28 @@ def check_diamant_account():
     if not username_limpio:
         return jsonify({"status": "invalid", "message": "Nombre de cuenta vacío"}), 400
 
-    conexion = psycopg2.connect(DATABASE_URL)
-    cursor = conexion.cursor()
-    cursor.execute('SELECT username FROM usuarios WHERE username = %s', (username_limpio,))
-    resultado = cursor.fetchone()
-    cursor.close()
-    conexion.close()
+    try:
+        conexion = conectar_db()
+        cursor = conexion.cursor()
+        cursor.execute('SELECT username FROM usuarios WHERE username = %s', (username_limpio,))
+        resultado = cursor.fetchone()
+        cursor.close()
+        conexion.close()
 
-    if resultado:
-        return jsonify({
-            "status": "exists", 
-            "cuenta_completa": f"{username_limpio}@diamantaccount.com",
-            "message": "La cuenta existe. Proceder al login."
-        }), 200
-    else:
-        return jsonify({
-            "status": "not_found", 
-            "cuenta_completa": f"{username_limpio}@diamantaccount.com",
-            "message": "La cuenta no existe. El telefono puede ofrecer registrarla."
-        }), 200
+        if resultado:
+            return jsonify({
+                "status": "exists", 
+                "cuenta_completa": f"{username_limpio}@diamantaccount.com",
+                "message": "La cuenta existe. Proceder al login."
+            }), 200
+        else:
+            return jsonify({
+                "status": "not_found", 
+                "cuenta_completa": f"{username_limpio}@diamantaccount.com",
+                "message": "La cuenta no existe. El telefono puede ofrecer registrarla."
+            }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Fallo de conexión DB: {str(e)}"}), 500
 
 
 @app.route('/api/diamant_account/auth', methods=['POST'])
@@ -251,22 +264,25 @@ def auth_diamant_account():
     
     username_limpio = cuenta.replace('@diamantaccount.com', '') if '@diamantaccount.com' in cuenta else cuenta
 
-    conexion = psycopg2.connect(DATABASE_URL)
-    cursor = conexion.cursor()
-    cursor.execute('SELECT password, correo_recuperacion FROM usuarios WHERE username = %s', (username_limpio,))
-    resultado = cursor.fetchone()
-    cursor.close()
-    conexion.close()
+    try:
+        conexion = conectar_db()
+        cursor = conexion.cursor()
+        cursor.execute('SELECT password, correo_recuperacion FROM usuarios WHERE username = %s', (username_limpio,))
+        resultado = cursor.fetchone()
+        cursor.close()
+        conexion.close()
 
-    if resultado and check_password_hash(resultado[0], password):
-        return jsonify({
-            "auth": True,
-            "username": username_limpio,
-            "cuenta": f"{username_limpio}@diamantaccount.com",
-            "correo_respaldo": resultado[1] or "No asignado"
-        }), 200
-        
-    return jsonify({"auth": False, "message": "Credenciales incorrectas para Diamant Account"}), 401
+        if resultado and check_password_hash(resultado[0], password):
+            return jsonify({
+                "auth": True,
+                "username": username_limpio,
+                "cuenta": f"{username_limpio}@diamantaccount.com",
+                "correo_respaldo": resultado[1] or "No asignado"
+            }), 200
+            
+        return jsonify({"auth": False, "message": "Credenciales incorrectas para Diamant Account"}), 401
+    except Exception as e:
+        return jsonify({"auth": False, "message": f"Fallo de conexión DB: {str(e)}"}), 500
 
 
 @app.route('/api/diamant_account/register', methods=['POST'])
@@ -281,28 +297,24 @@ def registrar_diamant_account():
     if not username_limpio or not password:
         return jsonify({"status": "error", "message": "Campos obligatorios incompletos"}), 400
 
-    conexion = psycopg2.connect(DATABASE_URL)
-    cursor = conexion.cursor()
     try:
+        conexion = conectar_db()
+        cursor = conexion.cursor()
         password_encriptada = generate_password_hash(password)
         cursor.execute('INSERT INTO usuarios (username, password, correo_recuperacion) VALUES (%s, %s, %s)', 
                        (username_limpio, password_encriptada, correo_respaldo))
         conexion.commit()
-        exito = True
-    except psycopg2.IntegrityError:
-        exito = False
-    finally:
         cursor.close()
         conexion.close()
-
-    if exito:
         return jsonify({
             "status": "created",
             "cuenta": f"{username_limpio}@diamantaccount.com",
             "message": "¡Cuenta del Kernel creada con éxito en la nube!"
         }), 201
-        
-    return jsonify({"status": "error", "message": "El identificador de cuenta ya se encuentra ocupado."}), 409
+    except psycopg2.IntegrityError:
+        return jsonify({"status": "error", "message": "El identificador de cuenta ya se encuentra ocupado."}), 409
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Fallo de conexión: {str(e)}"}), 500
 
 
 # =====================================================================
@@ -311,12 +323,15 @@ def registrar_diamant_account():
 
 @app.route('/panel_cuentas', methods=['GET'])
 def panel_cuentas():
-    conexion = psycopg2.connect(DATABASE_URL)
-    cursor = conexion.cursor()
-    cursor.execute('SELECT username, correo_recuperacion FROM usuarios ORDER BY username ASC')
-    lista_usuarios = cursor.fetchall()
-    cursor.close()
-    conexion.close()
+    try:
+        conexion = conectar_db()
+        cursor = conexion.cursor()
+        cursor.execute('SELECT username, correo_recuperacion FROM usuarios ORDER BY username ASC')
+        lista_usuarios = cursor.fetchall()
+        cursor.close()
+        conexion.close()
+    except Exception as e:
+        return f"<h3>Error al cargar panel: {str(e)}</h3>"
     
     filas_tabla = ""
     for user in lista_usuarios:
@@ -419,7 +434,6 @@ def subir_update():
         return '<script>alert("❌ Faltan datos o el archivo zip no es válido."); window.history.back();</script>'
 
     try:
-        # ☁️ Novedad: Guardar el update.zip directo en Cloudinary para no perderlo al reiniciarse la nube
         contenido_zip = archivo.read()
         archivo_simulado = io.BytesIO(contenido_zip)
         
@@ -432,9 +446,9 @@ def subir_update():
         )
         url_zip_persistente = resultado_cloudinary['secure_url']
 
-        # Guardamos la nueva versión y el link eterno en nuestra tabla relacional externa
-        conexion = psycopg2.connect(DATABASE_URL)
+        conexion = conectar_db()
         cursor = conexion.cursor()
+        # 🔧 CORREGIDO: Sintaxis %s adaptada correctamente para PostgreSQL
         cursor.execute('''
             UPDATE ota_version 
             SET version = %s, url_zip = %s 
@@ -456,40 +470,50 @@ def subir_update():
 
 @app.route('/api/apps', methods=['GET'])
 def obtener_apps():
-    conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
-    cursor = conexion.cursor()
-    cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, fecha_subida FROM aplicaciones ORDER BY fecha_subida DESC')
-    apps = [dict(fila) for fila in cursor.fetchall()]
-    cursor.close()
-    conexion.close()
-    return jsonify(apps)
+    try:
+        conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
+        cursor = conexion.cursor()
+        cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, fecha_subida FROM aplicaciones ORDER BY fecha_subida DESC')
+        apps = [dict(fila) for fila in cursor.fetchall()]
+        cursor.close()
+        conexion.close()
+        return jsonify(apps)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/apps/<int:app_id>/codigo', methods=['GET'])
 def obtener_codigo_app(app_id):
-    conexion = psycopg2.connect(DATABASE_URL)
-    cursor = conexion.cursor()
-    cursor.execute('SELECT codigo_fuente, url_descarga FROM aplicaciones WHERE id = %s', (app_id,))
-    resultado = cursor.fetchone()
-    cursor.close()
-    conexion.close()
-    if resultado:
-        return jsonify({
-            "codigo": resultado[0],
-            "url_descarga": resultado[1]
-        })
-    return jsonify({"error": "App no encontrada"}), 404
+    try:
+        conexion = conectar_db()
+        cursor = conexion.cursor()
+        cursor.execute('SELECT codigo_fuente, url_descarga FROM aplicaciones WHERE id = %s', (app_id,))
+        resultado = cursor.fetchone()
+        cursor.close()
+        conexion.close()
+        if resultado:
+            return jsonify({
+                "codigo": resultado[0],
+                "url_descarga": resultado[1]
+            })
+        return jsonify({"error": "App no encontrada"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/', methods=['GET'])
 def pagina_web():
-    conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
-    cursor = conexion.cursor()
-    cursor.execute('SELECT * FROM aplicaciones ORDER BY fecha_subida DESC')
-    apps = cursor.fetchall()
-    cursor.close()
-    conexion.close()
-    
+    try:
+        conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
+        cursor = conexion.cursor()
+        cursor.execute('SELECT * FROM aplicaciones ORDER BY fecha_subida DESC')
+        apps = cursor.fetchall()
+        cursor.close()
+        conexion.close()
+    except Exception as e:
+        apps = []
+        print(f"Error cargando apps en página principal: {e}")
+        
     usuario_logueado = session.get('usuario')
     return render_template('tienda.html', aplicaciones=apps, usuario=usuario_logueado)
 
@@ -500,25 +524,29 @@ def login():
     password = request.form.get('password')
     accion = request.form.get('accion')
     
-    conexion = psycopg2.connect(DATABASE_URL)
-    cursor = conexion.cursor()
-    
-    if accion == "registro":
-        try:
-            password_encriptada = generate_password_hash(password)
-            cursor.execute('INSERT INTO usuarios (username, password) VALUES (%s, %s)', (username, password_encriptada))
-            conexion.commit()
-            session['usuario'] = username
-        except psycopg2.IntegrityError:
-            pass 
-    else:
-        cursor.execute('SELECT password FROM usuarios WHERE username = %s', (username,))
-        resultado = cursor.fetchone()
-        if resultado and check_password_hash(resultado[0], password):
-            session['usuario'] = username
-            
-    cursor.close()
-    conexion.close()
+    try:
+        conexion = conectar_db()
+        cursor = conexion.cursor()
+        
+        if accion == "registro":
+            try:
+                password_encriptada = generate_password_hash(password)
+                cursor.execute('INSERT INTO usuarios (username, password) VALUES (%s, %s)', (username, password_encriptada))
+                conexion.commit()
+                session['usuario'] = username
+            except psycopg2.IntegrityError:
+                pass 
+        else:
+            cursor.execute('SELECT password FROM usuarios WHERE username = %s', (username,))
+            resultado = cursor.fetchone()
+            if resultado and check_password_hash(resultado[0], password):
+                session['usuario'] = username
+                
+        cursor.close()
+        conexion.close()
+    except Exception as e:
+        print(f"Fallo de login en DB: {e}")
+        
     return redirect(url_for('pagina_web'))
 
 
@@ -617,16 +645,19 @@ def subir_app():
         except Exception as storage_err:
             url_descarga_final = f"error: {str(storage_err)}"
 
-        conexion = psycopg2.connect(DATABASE_URL)
-        cursor = conexion.cursor()
-        cursor.execute('''
-            INSERT INTO aplicaciones (nombre, version, descripcion, categoria, codigo_fuente, autor, url_descarga)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ''', (nombre, version, descripcion, categoria, codigo, autor, url_descarga_final))
-        conexion.commit()
-        cursor.close()
-        conexion.close()
-        return redirect(url_for('pagina_web'))
+        try:
+            conexion = conectar_db()
+            cursor = conexion.cursor()
+            cursor.execute('''
+                INSERT INTO aplicaciones (nombre, version, descripcion, categoria, codigo_fuente, autor, url_descarga)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            ''', (nombre, version, descripcion, categoria, codigo, autor, url_descarga_final))
+            conexion.commit()
+            cursor.close()
+            conexion.close()
+            return redirect(url_for('pagina_web'))
+        except Exception as e:
+            return f"<h3>Error al guardar la app en base de datos: {str(e)}</h3>"
 
     return '''
     <script>
@@ -641,17 +672,21 @@ def eliminar_app(app_id):
     if 'usuario' not in session:
         return redirect(url_for('pagina_web'))
         
-    conexion = psycopg2.connect(DATABASE_URL)
-    cursor = conexion.cursor()
-    cursor.execute('SELECT autor FROM aplicaciones WHERE id = %s', (app_id,))
-    resultado = cursor.fetchone()
-    
-    if resultado and resultado[0] == session['usuario']:
-        cursor.execute('DELETE FROM aplicaciones WHERE id = %s', (app_id,))
-        conexion.commit()
+    try:
+        conexion = conectar_db()
+        cursor = conexion.cursor()
+        cursor.execute('SELECT autor FROM aplicaciones WHERE id = %s', (app_id,))
+        resultado = cursor.fetchone()
         
-    cursor.close()
-    conexion.close()
+        if resultado and resultado[0] == session['usuario']:
+            cursor.execute('DELETE FROM aplicaciones WHERE id = %s', (app_id,))
+            conexion.commit()
+            
+        cursor.close()
+        conexion.close()
+    except Exception as e:
+        print(f"Error al eliminar la app: {e}")
+        
     return redirect(url_for('pagina_web'))
 
 
