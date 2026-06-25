@@ -107,20 +107,49 @@ def descargar_update_ota():
 
 
 # =====================================================================
-# 📱 REQUERIMIENTO 1: ENDPOINT DE ACTUALIZACIÓN DE APPS INDIVIDUALES
+# 📱 REQUERIMIENTO 1: ENDPOINT DE ACTUALIZACIÓN DE APPS INTEGRADO A BASE DE DATOS
 # =====================================================================
 
 @app.route('/appactualizacion', methods=['GET'])
 def app_actualizacion():
     """
-    Ruta para que Diamant Store consulte la última versión estable de una app del ecosistema.
-    Ejemplo de llamada: /appactualizacion?app=bloc_notas
+    Ruta optimizada para C#. Consulta la base de datos real para las apps subidas.
+    Soporta búsquedas con espacios, guiones bajos o mayúsculas.
+    Ejemplo: /appactualizacion?app=Rat Football League
     """
     id_app = request.args.get('app')
     if not id_app:
         return Response("error|Falta el parametro app", status=400, mimetype='text/plain')
     
-    # Repositorio de la versión oficial del Ecosistema de aplicaciones
+    # Limpiamos el query del parámetro para que no falle por formatos
+    nombre_limpio = id_app.strip().lower()
+    nombre_con_guiones = nombre_limpio.replace(" ", "_")
+
+    # 1. Intentar buscar en la base de datos SQLite (las que vas subiendo desde la web)
+    try:
+        conexion = sqlite3.connect(DB_PATH)
+        cursor = conexion.cursor()
+        
+        # Buscamos ignorando mayúsculas/minúsculas y comparando ambas variantes (con o sin espacios)
+        cursor.execute('''
+            SELECT version, url_descarga FROM aplicaciones 
+            WHERE LOWER(nombre) = ? OR LOWER(nombre) = ?
+            ORDER BY fecha_subida DESC LIMIT 1
+        ''', (nombre_limpio, nombre_con_guiones))
+        
+        resultado = cursor.fetchone()
+        conexion.close()
+
+        if resultado:
+            version_db = resultado[0]
+            url_db = resultado[1] if resultado[1] else "https://diamant-cloud.onrender.com/"
+            # Retorna el formato limpio "version|url" que espera tu C# (StreamReader.ReadLine)
+            return Response(f"{version_db}|{url_db}", mimetype='text/plain')
+
+    except Exception as db_err:
+        print(f"Error consultando la app en la DB: {db_err}")
+
+    # 2. Diccionario de Respaldo (Ecosistema base por si no se han subido apps)
     ecosistema_apps = {
         "bloc_notas": {
             "version": "1.2.0",
@@ -136,12 +165,14 @@ def app_actualizacion():
         }
     }
     
-    app_info = ecosistema_apps.get(id_app.lower().strip())
+    # Buscamos en el diccionario usando las dos variantes limpias
+    app_info = ecosistema_apps.get(nombre_limpio) or ecosistema_apps.get(nombre_con_guiones)
+    
     if app_info:
         respuesta_plana = f"{app_info['version']}|{app_info['url']}"
         return Response(respuesta_plana, mimetype='text/plain')
     
-    return Response("error|Aplicacion no registrada en el ecosistema Kernel", status=404, mimetype='text/plain')
+    return Response("error|Aplicacion no registrada en el ecosistema Kernel ni en la Nube", status=404, mimetype='text/plain')
 
 
 # =====================================================================
@@ -150,10 +181,6 @@ def app_actualizacion():
 
 @app.route('/api/diamant_account/check', methods=['POST'])
 def check_diamant_account():
-    """
-    Ruta que el C# llamará en segundo plano al escribir el usuario.
-    Verifica si la identidad @diamantaccount.com existe.
-    """
     datos = request.json or {}
     cuenta = datos.get('cuenta', '').strip().lower()
     
@@ -187,10 +214,6 @@ def check_diamant_account():
 
 @app.route('/api/diamant_account/auth', methods=['POST'])
 def auth_diamant_account():
-    """
-    Inicia sesión de forma remota desde el sistema operativo C#.
-    Maneja contraseñas seguras mediante hashes.
-    """
     datos = request.json or {}
     cuenta = datos.get('cuenta', '').strip().lower()
     password = datos.get('password', '')
@@ -216,9 +239,6 @@ def auth_diamant_account():
 
 @app.route('/api/diamant_account/register', methods=['POST'])
 def registrar_diamant_account():
-    """
-    Crea dinámicamente un nuevo Diamant Account vinculándole un correo real de recuperación.
-    """
     datos = request.json or {}
     cuenta = datos.get('cuenta', '').strip().lower()
     password = datos.get('password', '')
@@ -253,12 +273,11 @@ def registrar_diamant_account():
 
 
 # =====================================================================
-# 👥 NUEVO: PANEL VISUAL DE ADMINISTRACIÓN DE CUENTAS DEL KERNEL
+# 👥 PANEL VISUAL DE ADMINISTRACIÓN DE CUENTAS DEL KERNEL
 # =====================================================================
 
 @app.route('/panel_cuentas', methods=['GET'])
 def panel_cuentas():
-    """Muestra una interfaz web estilizada para ver los Diamant Accounts registrados"""
     conexion = sqlite3.connect(DB_PATH)
     cursor = conexion.cursor()
     cursor.execute('SELECT username, correo_recuperacion FROM usuarios ORDER BY username ASC')
@@ -316,10 +335,8 @@ def panel_cuentas():
 
 # =====================================================================
 
-
 @app.route('/panel_update', methods=['GET'])
 def panel_update():
-    """Muestra una página web con diseño minimalista para subir la actualización desde el navegador"""
     return '''
     <!DOCTYPE html>
     <html>
@@ -358,7 +375,6 @@ def panel_update():
 
 @app.route('/subir_update', methods=['POST'])
 def subir_update():
-    """Recibe el formulario, guarda el archivo .zip y reescribe la nueva versión en la nube"""
     version = request.form.get('nueva_version')
     clave = request.form.get('admin_key')
     archivo = request.files.get('archivo_zip')
