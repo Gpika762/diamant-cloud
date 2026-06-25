@@ -13,7 +13,6 @@ app = Flask(__name__)
 app.secret_key = "diamant_secret_key_os_cloud_123"
 
 # 🐘 CONFIGURACIÓN DE POSTGRESQL EXTERNA (Neon.tech, Supabase, etc.)
-# En producción, lee DATABASE_URL desde el entorno de Render de forma estricta.
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
@@ -79,7 +78,7 @@ def inicializar_base_datos():
         if cursor.fetchone()[0] == 0:
             cursor.execute('''
                 INSERT INTO ota_version (id, version, url_zip) 
-                VALUES (1, '1.0.0 bf3', 'https://diamant-cloud.onrender.com/')
+                VALUES (1, '1.0.0 bf3', 'https://diamant-cloud.onrender.com/update.zip')
             ''')
 
         conexion.commit()
@@ -119,7 +118,6 @@ def cambiar_version_ota():
         try:
             conexion = conectar_db()
             cursor = conexion.cursor()
-            # 🔧 CORREGIDO: Se cambió '?' por '%s' para compatibilidad estricta con psycopg2
             cursor.execute('UPDATE ota_version SET version = %s WHERE id = 1', (nueva_version.strip(),))
             conexion.commit()
             cursor.close()
@@ -151,14 +149,11 @@ def descargar_update_ota():
 
 
 # =====================================================================
-# 📱 REQUERIMIENTO 1: ENDPOINT DE ACTUALIZACIÓN DE APPS INTEGRADO A BASE DE DATOS
+# 📱 ENDPOINT DE ACTUALIZACIÓN DE APPS INTEGRADO A BASE DE DATOS
 # =====================================================================
 
 @app.route('/appactualizacion', methods=['GET'])
 def app_actualizacion():
-    """
-    Ruta optimizada para C#. Consulta la base de datos PostgreSQL externa.
-    """
     id_app = request.args.get('app')
     if not id_app:
         return Response("error|Falta el parametro app", status=400, mimetype='text/plain')
@@ -166,12 +161,9 @@ def app_actualizacion():
     nombre_limpio = id_app.strip().lower()
     nombre_con_guiones = nombre_limpio.replace(" ", "_")
 
-    # 1. Intentar buscar en PostgreSQL externa
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
-        
-        # Buscamos ignorando mayúsculas/minúsculas empleando la función LOWER nativa
         cursor.execute('''
             SELECT version, url_descarga FROM aplicaciones 
             WHERE LOWER(nombre) = %s OR LOWER(nombre) = %s
@@ -190,7 +182,7 @@ def app_actualizacion():
     except Exception as db_err:
         print(f"Error consultando la app en PostgreSQL: {db_err}")
 
-    # 2. Diccionario de Respaldo (Ecosistema base estático)
+    # Diccionario de Respaldo
     ecosistema_apps = {
         "bloc_notas": {
             "version": "1.2.0",
@@ -207,16 +199,14 @@ def app_actualizacion():
     }
     
     app_info = ecosistema_apps.get(nombre_limpio) or ecosistema_apps.get(nombre_con_guiones)
-    
     if app_info:
-        respuesta_plana = f"{app_info['version']}|{app_info['url']}"
-        return Response(respuesta_plana, mimetype='text/plain')
+        return Response(f"{app_info['version']}|{app_info['url']}", mimetype='text/plain')
     
     return Response("error|Aplicacion no registrada en el ecosistema Kernel ni en la Nube", status=404, mimetype='text/plain')
 
 
 # =====================================================================
-# 🔐 REQUERIMIENTO 2: GESTIÓN CENTRALIZADA DIAMANT ACCOUNT EN LA NUBE
+# 🔐 GESTIÓN CENTRALIZADA DIAMANT ACCOUNT EN LA NUBE
 # =====================================================================
 
 @app.route('/api/diamant_account/check', methods=['POST'])
@@ -250,7 +240,7 @@ def check_diamant_account():
             return jsonify({
                 "status": "not_found", 
                 "cuenta_completa": f"{username_limpio}@diamantaccount.com",
-                "message": "La cuenta no existe. El telefono puede ofrecer registrarla."
+                "message": "La cuenta no existe."
             }), 200
     except Exception as e:
         return jsonify({"status": "error", "message": f"Fallo de conexión DB: {str(e)}"}), 500
@@ -318,7 +308,7 @@ def registrar_diamant_account():
 
 
 # =====================================================================
-# 👥 PANEL VISUAL DE ADMINISTRACIÓN DE CUENTAS DEL KERNEL
+# 👥 PANELES VISUALES (WEB)
 # =====================================================================
 
 @app.route('/panel_cuentas', methods=['GET'])
@@ -336,12 +326,7 @@ def panel_cuentas():
     filas_tabla = ""
     for user in lista_usuarios:
         correo_rec = user[1] if user[1] else '<span style="color: #ecc94b;">⚠️ Sin correo asignado</span>'
-        filas_tabla += f"""
-        <tr>
-            <td>👤 {user[0]}@diamantaccount.com</td>
-            <td>📧 {correo_rec}</td>
-        </tr>
-        """
+        filas_tabla += f"<tr><td>👤 {user[0]}@diamantaccount.com</td><td>📧 {correo_rec}</td></tr>"
         
     return f'''
     <!DOCTYPE html>
@@ -351,36 +336,25 @@ def panel_cuentas():
         <style>
             body {{ font-family: 'Segoe UI', sans-serif; background: #121824; color: #f3f4f6; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }}
             .container {{ background: #1a2333; padding: 35px; border-radius: 16px; box-shadow: 0 10px 25px rgba(0,0,0,0.3); width: 550px; border: 1px solid #2d3d5a; }}
-            h2 {{ color: #3b82f6; margin-top: 0; text-align: center; font-size: 24px; letter-spacing: 0.5px; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; text-align: left; }}
-            th, td {{ padding: 14px; border-bottom: 1px solid #2d3d5a; font-size: 14px; }}
-            th {{ background: #233047; color: #9ca3af; font-weight: 600; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; }}
-            tr:hover {{ background: #222e44; }}
-            .btn-volver {{ display: inline-block; width: 100%; text-align: center; padding: 12px; margin-top: 25px; background: #3b82f6; color: white; text-decoration: none; font-weight: bold; border-radius: 8px; font-size: 14px; box-sizing: border-box; transition: background 0.2s; }}
-            .btn-volver:hover {{ background: #2563eb; }}
-            .count-badge {{ background: #2563eb; color: white; padding: 3px 8px; border-radius: 20px; font-size: 12px; margin-left: 8px; vertical-align: middle; }}
+            h2 {{ color: #3b82f6; margin-top: 0; text-align: center; font-size: 24px; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+            th, td {{ padding: 14px; border-bottom: 1px solid #2d3d5a; text-align: left; }}
+            th {{ background: #233047; color: #9ca3af; }}
+            .btn-volver {{ display: block; text-align: center; padding: 12px; margin-top: 25px; background: #3b82f6; color: white; text-decoration: none; font-weight: bold; border-radius: 8px; }}
         </style>
     </head>
     <body>
         <div class="container">
-            <h2>👥 Diamant Accounts Activos <span class="count-badge">{len(lista_usuarios)}</span></h2>
+            <h2>👥 Diamant Accounts Activos <span style="background:#2563eb; padding:3px 8px; border-radius:20px; font-size:12px;">{len(lista_usuarios)}</span></h2>
             <table>
-                <thead>
-                    <tr>
-                        <th>Identidad Kernel</th>
-                        <th>Correo de Respaldo</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {filas_tabla if filas_tabla else '<tr><td colspan="2" style="text-align:center; color:#6b7280;">No hay cuentas vinculadas en la nube aún.</td></tr>'}
-                </tbody>
+                <thead><tr><th>Identidad Kernel</th><th>Correo de Respaldo</th></tr></thead>
+                <tbody>{filas_tabla if filas_tabla else '<tr><td colspan="2" style="text-align:center;">No hay cuentas aún.</td></tr>'}</tbody>
             </table>
             <a href="/" class="btn-volver">Volver a Diamant Store</a>
         </div>
     </body>
     </html>
     '''
-
 
 @app.route('/panel_update', methods=['GET'])
 def panel_update():
@@ -392,11 +366,9 @@ def panel_update():
         <style>
             body { font-family: 'Segoe UI', sans-serif; background: #f4f5f7; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
             .card { background: white; padding: 30px; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); width: 400px; }
-            h2 { color: #4285F4; margin-top: 0; text-align: center; }
-            label { font-weight: 600; color: #333; font-size: 14px; }
-            input, button { width: 100%; padding: 12px; margin: 8px 0 18px 0; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; font-size: 14px; }
-            button { background: #4285F4; color: white; border: none; font-weight: bold; cursor: pointer; margin-top: 5px; transition: background 0.2s; }
-            button:hover { background: #2b72e2; }
+            h2 { color: #4285F4; text-align: center; }
+            input, button { width: 100%; padding: 12px; margin: 8px 0 18px 0; border-radius: 8px; border: 1px solid #ccc; box-sizing: border-box; }
+            button { background: #4285F4; color: white; font-weight: bold; cursor: pointer; border: none; }
         </style>
     </head>
     <body>
@@ -405,13 +377,10 @@ def panel_update():
             <form action="/subir_update" method="POST" enctype="multipart/form-data">
                 <label>Nueva Versión (ej: 1.0.0 bf4):</label>
                 <input type="text" name="nueva_version" placeholder="1.0.0 bf4" required>
-                
                 <label>Archivo de Actualización (update.zip):</label>
                 <input type="file" name="archivo_zip" accept=".zip" required>
-                
                 <label>Clave de Desarrollador:</label>
                 <input type="password" name="admin_key" placeholder="Contraseña de admin" required>
-                
                 <button type="submit">Publicar Actualización OTA</button>
             </form>
         </div>
@@ -419,10 +388,8 @@ def panel_update():
     </html>
     '''
 
-
 @app.route('/subir_update', methods=['POST'])
 def subir_update():
-    """Sube el binario update.zip de forma segura a Cloudinary y registra la metadata en Postgres"""
     version = request.form.get('nueva_version')
     clave = request.form.get('admin_key')
     archivo = request.files.get('archivo_zip')
@@ -448,7 +415,6 @@ def subir_update():
 
         conexion = conectar_db()
         cursor = conexion.cursor()
-        # 🔧 CORREGIDO: Sintaxis %s adaptada correctamente para PostgreSQL
         cursor.execute('''
             UPDATE ota_version 
             SET version = %s, url_zip = %s 
@@ -460,46 +426,17 @@ def subir_update():
 
         return f'''
         <script>
-            alert("✨ ¡Diamant OS Actualizado Eternamente!\\n\\nNueva versión activa: {version}\\nEl paquete OTA se distribuyó en Cloudinary de forma persistente.");
+            alert("✨ ¡Diamant OS Actualizado!\\n\\nNueva versión: {version}");
             window.location.href = "/";
         </script>
         '''
     except Exception as e:
-        return f'<script>alert("⚠️ Error crítico al almacenar los ficheros OTA: {str(e)}"); window.history.back();</script>'
+        return f'<script>alert("⚠️ Error crítico: {str(e)}"); window.history.back();</script>'
 
 
-@app.route('/api/apps', methods=['GET'])
-def obtener_apps():
-    try:
-        conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
-        cursor = conexion.cursor()
-        cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, fecha_subida FROM aplicaciones ORDER BY fecha_subida DESC')
-        apps = [dict(fila) for fila in cursor.fetchall()]
-        cursor.close()
-        conexion.close()
-        return jsonify(apps)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/apps/<int:app_id>/codigo', methods=['GET'])
-def obtener_codigo_app(app_id):
-    try:
-        conexion = conectar_db()
-        cursor = conexion.cursor()
-        cursor.execute('SELECT codigo_fuente, url_descarga FROM aplicaciones WHERE id = %s', (app_id,))
-        resultado = cursor.fetchone()
-        cursor.close()
-        conexion.close()
-        if resultado:
-            return jsonify({
-                "codigo": resultado[0],
-                "url_descarga": resultado[1]
-            })
-        return jsonify({"error": "App no encontrada"}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
+# =====================================================================
+# 🛒 TIENDA PRINCIPAL Y FLUJO DE LOGUEO CORREGIDO
+# =====================================================================
 
 @app.route('/', methods=['GET'])
 def pagina_web():
@@ -520,10 +457,14 @@ def pagina_web():
 
 @app.route('/login', methods=['POST'])
 def login():
-    username = request.form.get('username')
-    password = request.form.get('password')
-    accion = request.form.get('accion')
+    """Ruta de autenticación corregida con strips seguros y control de flujo"""
+    username = request.form.get('username', '').strip()
+    password = request.form.get('password', '')
+    accion = request.form.get('accion') # 'login' o 'registro'
     
+    if not username or not password:
+        return '<script>alert("Campos vacíos."); window.history.back();</script>'
+        
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
@@ -535,17 +476,25 @@ def login():
                 conexion.commit()
                 session['usuario'] = username
             except psycopg2.IntegrityError:
-                pass 
+                cursor.close()
+                conexion.close()
+                return '<script>alert("El nombre de usuario ya existe."); window.history.back();</script>'
         else:
+            # Login por defecto (si accion == 'login' o si no viene el campo)
             cursor.execute('SELECT password FROM usuarios WHERE username = %s', (username,))
             resultado = cursor.fetchone()
             if resultado and check_password_hash(resultado[0], password):
                 session['usuario'] = username
+            else:
+                cursor.close()
+                conexion.close()
+                return '<script>alert("Usuario o contraseña incorrectos."); window.history.back();</script>'
                 
         cursor.close()
         conexion.close()
     except Exception as e:
         print(f"Fallo de login en DB: {e}")
+        return f'<script>alert("Error del servidor en DB: {str(e)}"); window.history.back();</script>'
         
     return redirect(url_for('pagina_web'))
 
@@ -583,7 +532,6 @@ def subir_app():
     """
 
     pasa_la_ia = False
-
     try:
         url_api = "https://openrouter.ai/api/v1/chat/completions"
         encabezados = {
@@ -597,7 +545,6 @@ def subir_app():
         }
         
         respuesta = requests.post(url_api, headers=encabezados, json=cuerpo_peticion, timeout=12)
-        
         if respuesta.status_code == 200:
             datos_ia = respuesta.json()
             contenido_respuesta = datos_ia['choices'][0]['message']['content'].strip()
@@ -609,7 +556,6 @@ def subir_app():
                 contenido_respuesta = contenido_respuesta.split("```")[0].strip()
                 
             resultado_revision = json.loads(contenido_respuesta)
-            
             if resultado_revision.get("valido") == False:
                 error_formateado = resultado_revision.get("error_mensaje", "Error de sintaxis.").replace('"', '\\"').replace('\n', '\\n')
                 return f'''
@@ -641,7 +587,6 @@ def subir_app():
                 overwrite=True
             )
             url_descarga_final = resultado['secure_url']
-            
         except Exception as storage_err:
             url_descarga_final = f"error: {str(storage_err)}"
 
@@ -688,6 +633,39 @@ def eliminar_app(app_id):
         print(f"Error al eliminar la app: {e}")
         
     return redirect(url_for('pagina_web'))
+
+
+@app.route('/api/apps', methods=['GET'])
+def obtener_apps():
+    try:
+        conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
+        cursor = conexion.cursor()
+        cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, fecha_subida FROM aplicaciones ORDER BY fecha_subida DESC')
+        apps = [dict(fila) for fila in cursor.fetchall()]
+        cursor.close()
+        conexion.close()
+        return jsonify(apps)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/apps/<int:app_id>/codigo', methods=['GET'])
+def obtener_codigo_app(app_id):
+    try:
+        conexion = conectar_db()
+        cursor = conexion.cursor()
+        cursor.execute('SELECT codigo_fuente, url_descarga FROM aplicaciones WHERE id = %s', (app_id,))
+        resultado = cursor.fetchone()
+        cursor.close()
+        conexion.close()
+        if resultado:
+            return jsonify({
+                "codigo": resultado[0],
+                "url_descarga": resultado[1]
+            })
+        return jsonify({"error": "App no encontrada"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == '__main__':
