@@ -184,7 +184,7 @@
         /* 🛍️ VISTA TIENDA: GRID DE APLICACIONES */
         .store-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
             gap: 20px;
         }
 
@@ -223,6 +223,7 @@
             font-size: 24px;
             font-weight: bold;
             box-shadow: 0 4px 10px rgba(10, 110, 242, 0.2);
+            flex-shrink: 0;
         }
 
         .app-info {
@@ -235,6 +236,16 @@
             font-size: 17px;
             font-weight: 700;
             margin: 0 0 2px 0;
+        }
+
+        .app-title a {
+            color: var(--text-main);
+            text-decoration: none;
+            transition: color 0.2s;
+        }
+
+        .app-title a:hover {
+            color: var(--primary);
         }
 
         .app-meta {
@@ -264,11 +275,16 @@
             line-height: 1.5;
             margin: 0 0 20px 0;
             flex-grow: 1;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
         }
 
         .card-actions {
             display: flex;
-            gap: 10px;
+            gap: 8px;
+            flex-wrap: wrap;
         }
 
         .download-btn {
@@ -277,9 +293,9 @@
             color: var(--text-main);
             text-decoration: none;
             text-align: center;
-            padding: 10px 18px;
+            padding: 10px 14px;
             border-radius: 12px;
-            font-size: 13.5px;
+            font-size: 13px;
             font-weight: 600;
             transition: all 0.2s;
             border: 1px solid rgba(255,255,255,0.03);
@@ -290,13 +306,31 @@
             box-shadow: 0 4px 12px rgba(10, 110, 242, 0.3);
         }
 
+        .btn-secondary {
+            background-color: rgba(255, 255, 255, 0.06);
+            color: #d1d5db;
+            text-decoration: none;
+            padding: 10px 12px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 600;
+            text-align: center;
+            transition: all 0.2s;
+            border: 1px solid rgba(255,255,255,0.04);
+        }
+
+        .btn-secondary:hover {
+            background-color: rgba(255, 255, 255, 0.14);
+            color: white;
+        }
+
         .btn-delete {
             background-color: rgba(255, 59, 48, 0.1);
             color: var(--danger);
             text-decoration: none;
-            padding: 10px 14px;
+            padding: 10px 12px;
             border-radius: 12px;
-            font-size: 13.5px;
+            font-size: 13px;
             font-weight: bold;
             text-align: center;
             transition: all 0.2s;
@@ -310,7 +344,7 @@
         /* 🖥️ SECCIÓN IDE PROGRAMADOR EN LA NUBE */
         .ide-container {
             display: grid;
-            grid-template-columns: 320px 1fr;
+            grid-template-columns: 330px 1fr;
             gap: 30px;
             background-color: var(--bg-card);
             border: 1px solid var(--border);
@@ -328,27 +362,27 @@
         }
 
         .form-group {
-            margin-bottom: 18px;
+            margin-bottom: 16px;
         }
 
         label {
             display: block;
-            font-size: 12px;
+            font-size: 11.5px;
             font-weight: 700;
             color: var(--text-muted);
-            margin-bottom: 8px;
+            margin-bottom: 7px;
             text-transform: uppercase;
             letter-spacing: 0.8px;
         }
 
         input, select, textarea {
             width: 100%;
-            padding: 12px 16px;
+            padding: 11px 14px;
             background-color: var(--bg-input);
             border: 1px solid var(--border);
             border-radius: 12px;
             color: var(--text-main);
-            font-size: 14px;
+            font-size: 13.5px;
             box-sizing: border-box;
             transition: all 0.2s ease;
         }
@@ -359,7 +393,6 @@
             box-shadow: 0 0 0 3px rgba(10, 110, 242, 0.25);
         }
 
-        /* Editor Terminal Code Style */
         .code-editor {
             font-family: 'Consolas', 'Courier New', monospace;
             background-color: #050508;
@@ -367,7 +400,7 @@
             border: 1px solid #1a1a24;
             padding: 20px;
             border-radius: 14px;
-            height: 480px;
+            height: 520px;
             resize: none;
             font-size: 14px;
             line-height: 1.6;
@@ -600,7 +633,9 @@
                         <div class="card-top">
                             <div class="app-icon">{{ app.nombre[0] | upper }}</div>
                             <div class="app-info">
-                                <h3 class="app-title">{{ app.nombre }}</h3>
+                                <h3 class="app-title">
+                                    <a href="/app/{{ app.id }}">{{ app.nombre }}</a>
+                                </h3>
                                 <div class="app-meta">
                                     <span class="badge">{{ app.categoria }}</span>
                                     <span class="version">v{{ app.version }}</span>
@@ -612,9 +647,15 @@
                     </div>
                     <div class="card-actions">
                         {% if app.url_descarga and not app.url_descarga.startswith('error') %}
-                            <a href="{{ app.url_descarga }}" class="download-btn" target="_blank">📥 Descargar Código (.cs)</a>
+                            <a href="{{ app.url_descarga }}" class="download-btn" target="_blank">📥 Descargar</a>
                         {% else %}
-                            <button class="download-btn" style="opacity: 0.6; cursor: not-allowed;" disabled>✓ Instalado en Diamant OS</button>
+                            <button class="download-btn" style="opacity: 0.6; cursor: not-allowed;" disabled>✓ En sistema</button>
+                        {% endif %}
+
+                        <a href="/app/{{ app.id }}" class="btn-secondary" title="Ver ficha y descripción completa">📄 Ficha</a>
+
+                        {% if app.pagina_web %}
+                            <a href="{{ app.pagina_web }}" class="btn-secondary" target="_blank" title="Visitar página oficial">🌐 Web</a>
                         {% endif %}
                         
                         {% if usuario == app.autor %}
@@ -674,6 +715,11 @@
                                         <option value="Sistema">⚙️ Sistema / Kernel</option>
                                         <option value="Herramientas">🧮 Herramientas</option>
                                     </select>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Página Web Oficial (Opcional)</label>
+                                    <input type="text" name="pagina_web" placeholder="https://github.com/tu-repo">
                                 </div>
 
                                 <div class="form-group">
