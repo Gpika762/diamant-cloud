@@ -1,46 +1,54 @@
 import os
 import json
-import requests  # Necesario para llamar a la API de OpenRouter
-import io        # Requerido para codificar los strings a bytes en memoria
+import requests
+import io
 import cloudinary
-import cloudinary.uploader  # 🌟 El motor de Cloudinary
-import psycopg2              # 🐘 Reemplazamos sqlite3 por PostgreSQL para persistencia real
+import cloudinary.uploader
+import psycopg2
 from psycopg2.extras import DictCursor
-from flask import Flask, jsonify, render_template, request, redirect, url_for, session, send_from_directory, Response
-from werkzeug.security import generate_password_hash, check_password_hash # Para encriptar contraseñas
+from flask import Flask, jsonify, render_template, request, redirect, url_for, session, Response
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.secret_key = "diamant_secret_key_os_cloud_123"
 
-# 🐘 CONFIGURACIÓN DE POSTGRESQL EXTERNA (Neon.tech, Supabase, etc.)
+# 🐘 CONFIGURACIÓN DE POSTGRESQL EXTERNA (Supabase)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "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")
 
-# 🔒 CONTRASENIA ADMINISTRADOR PARA MANDAR LA UPDATE DESDE LA WEB
+# 🔒 CONTRASEÑA ADMINISTRADOR PARA MANDAR LA UPDATE DESDE LA WEB
 ADMIN_PASSWORD_UPDATE = "diamant_admin_os_2026"
 
 # 🌟 CONFIGURACIÓN DE CLOUDINARY
-cloudinary.config( 
-    cloud_name = "dwoaq0vf6", 
-    api_key = "784588949973579", 
-    api_secret = "VFZ6V7ZOQlw7vCe_iI80qnD_1Iw",
-    secure = True
+cloudinary.config(
+    cloud_name="dwoaq0vf6",
+    api_key="784588949973579",
+    api_secret="VFZ6V7ZOQlw7vCe_iI80qnD_1Iw",
+    secure=True
 )
 
-def conectar_db():
-    """Helper seguro para conectar a la base de datos controlando la ausencia de credenciales"""
+
+def conectar_db(usar_dict=False):
+    """Helper seguro para conectar a Supabase PostgreSQL con SSL"""
     if not DATABASE_URL:
         raise ValueError("Error crítico: La variable de entorno DATABASE_URL no está configurada en Render.")
-    return psycopg2.connect(DATABASE_URL)
+    url_final = DATABASE_URL
+    if "sslmode=" not in url_final:
+        separador = "&" if "?" in url_final else "?"
+        url_final = f"{url_final}{separador}sslmode=require"
+    if usar_dict:
+        return psycopg2.connect(url_final, cursor_factory=DictCursor)
+    return psycopg2.connect(url_final)
+
 
 def inicializar_base_datos():
-    """Crea las tablas en PostgreSQL si no existen utilizando sintaxis compatible"""
+    """Crea las tablas y columnas nuevas en PostgreSQL al arrancar"""
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
-        
-        # Tabla aplicaciones modificada a sintaxis PostgreSQL (SERIAL en vez de AUTOINCREMENT)
+
+        # Tabla aplicaciones (con soporte para página web externa)
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS aplicaciones (
                 id SERIAL PRIMARY KEY,
@@ -51,10 +59,14 @@ def inicializar_base_datos():
                 codigo_fuente TEXT,
                 autor TEXT,
                 url_descarga TEXT,
+                pagina_web TEXT,
                 fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-        
+
+        # Migración segura por si la tabla ya existía sin pagina_web
+        cursor.execute('ALTER TABLE aplicaciones ADD COLUMN IF NOT EXISTS pagina_web TEXT')
+
         # Tabla usuarios para Diamant Account
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS usuarios (
@@ -63,8 +75,8 @@ def inicializar_base_datos():
                 correo_recuperacion TEXT
             )
         ''')
-        
-        # 📝 TABLA EXTRA: Para guardar la versión del OS y la URL del zip de forma persistente
+
+        # Tabla control de actualizaciones OTA
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS ota_version (
                 id INTEGER PRIMARY KEY,
@@ -72,21 +84,100 @@ def inicializar_base_datos():
                 url_zip TEXT NOT NULL
             )
         ''')
-        
-        # Insertar versión por defecto si la tabla de control OTA está vacía
+
         cursor.execute('SELECT COUNT(*) FROM ota_version')
         if cursor.fetchone()[0] == 0:
             cursor.execute('''
-                INSERT INTO ota_version (id, version, url_zip) 
+                INSERT INTO ota_version (id, version, url_zip)
                 VALUES (1, '1.0.0 bf3', 'https://diamant-cloud.onrender.com/update.zip')
             ''')
 
         conexion.commit()
         cursor.close()
         conexion.close()
-        print("🐘 Base de datos PostgreSQL inicializada con éxito.")
+        print("🐘 Base de datos PostgreSQL (Supabase) inicializada con éxito.")
     except Exception as e:
         print(f"❌ Error grave al inicializar la base de datos: {e}")
+
+
+# Ejecutar al importar para que Gunicorn en Render cree las tablas automáticamente
+if DATABASE_URL:
+    inicializar_base_datos()
+
+
+# =====================================================================
+# 🤖 BICONECTOR CLOUD: DIAMANT ASSISTANT v1.0.0
+# =====================================================================
+
+@app.route('/api/v1/assistant', methods=['POST'])
+def diamant_assistant_v1():
+    """Endpoint conectado a AssistantControl.cs en Diamant UI 1.0"""
+    datos = request.json or {}
+    query = datos.get('query', '').strip()
+    usuario = datos.get('user', '').strip()
+
+    if not usuario:
+        return jsonify({"Reply": "🔒 Acceso denegado. Inicia sesión en Diamant Account.", "ActionCode": "NONE"}), 401
+
+    if not query:
+        return jsonify({"Reply": "¿En qué te ayudo en duix?", "ActionCode": "NONE"}), 200
+
+    prompt_sistema = """
+    Eres Diamant Assistant v1.0.0, el asistente oficial integrado en duix y Diamant UI 1.0.
+    Responde de forma cercana, útil y concisa en español.
+    Devuelve SIEMPRE un JSON puro con esta estructura exacta:
+    {
+        "Reply": "Tu respuesta para el usuario",
+        "ActionCode": "CODIGO_ACCION"
+    }
+    Códigos de acción permitidos para ActionCode:
+    - "NONE" (si solo es conversación o pregunta)
+    - "OPEN_CALC" (si pide abrir la calculadora)
+    - "OPEN_NOTEPAD" (si pide abrir notas o bloc de notas)
+    - "OPEN_SETTINGS" (si pide abrir ajustes o configuración)
+    - "OPEN_STORE" (si pide abrir Diamant Shop / tienda)
+    """
+
+    try:
+        respuesta = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            },
+            json={
+                "model": "google/gemini-2.5-flash",
+                "messages": [
+                    {"role": "system", "content": prompt_sistema},
+                    {"role": "user", "content": f"[Usuario: {usuario}] {query}"}
+                ],
+                "response_format": {"type": "json_object"}
+            },
+            timeout=15
+        )
+
+        if respuesta.status_code == 200:
+            contenido = respuesta.json()['choices'][0]['message']['content'].strip()
+            if "```" in contenido:
+                contenido = contenido.split("```")[1].replace("json", "", 1).split("```")[0].strip()
+            parsed = json.loads(contenido)
+            return jsonify({
+                "Reply": parsed.get("Reply", "Listo."),
+                "ActionCode": parsed.get("ActionCode", "NONE")
+            }), 200
+    except Exception as e:
+        print(f"Error en Biconector IA: {e}")
+
+    # Fallback inteligente si OpenRouter tarda o falla
+    q = query.lower()
+    if "calculadora" in q:
+        return jsonify({"Reply": "Abriendo la calculadora en duix.", "ActionCode": "OPEN_CALC"}), 200
+    if "notas" in q or "bloc" in q:
+        return jsonify({"Reply": "Abriendo el bloc de notas.", "ActionCode": "OPEN_NOTEPAD"}), 200
+    if "ajustes" in q or "configuracion" in q:
+        return jsonify({"Reply": "Abriendo Ajustes del sistema.", "ActionCode": "OPEN_SETTINGS"}), 200
+
+    return jsonify({"Reply": "Biconector conectado, pero la IA está ocupada. Intenta de nuevo en un segundo.", "ActionCode": "NONE"}), 200
 
 
 # =====================================================================
@@ -95,7 +186,6 @@ def inicializar_base_datos():
 
 @app.route('/version.txt', methods=['GET'])
 def obtener_version_ota():
-    """Devuelve la versión actual del OS directo desde PostgreSQL (Persistente)"""
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
@@ -103,7 +193,7 @@ def obtener_version_ota():
         resultado = cursor.fetchone()
         cursor.close()
         conexion.close()
-        
+
         version = resultado[0] if resultado else "1.0.0 bf3"
         return Response(version, mimetype='text/plain')
     except Exception as e:
@@ -112,7 +202,6 @@ def obtener_version_ota():
 
 @app.route('/set_version', methods=['POST'])
 def cambiar_version_ota():
-    """Ruta útil para cambiar rápidamente la versión en la base de datos externa"""
     nueva_version = request.form.get('version')
     if nueva_version:
         try:
@@ -130,7 +219,6 @@ def cambiar_version_ota():
 
 @app.route('/update.zip', methods=['GET'])
 def descargar_update_ota():
-    """Redirecciona al binario update.zip real alojado permanentemente en Cloudinary"""
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
@@ -138,11 +226,10 @@ def descargar_update_ota():
         resultado = cursor.fetchone()
         cursor.close()
         conexion.close()
-        
-        if resultado and resultado[0] != "https://diamant-cloud.onrender.com/":
-            # Redireccionamos el cliente C# directamente a la descarga segura de Cloudinary
+
+        if resultado and resultado[0] != "[https://diamant-cloud.onrender.com/](https://diamant-cloud.onrender.com/)":
             return redirect(resultado[0])
-            
+
         return jsonify({"error": "El archivo de actualización no está configurado en el almacenamiento externo."}), 404
     except Exception as e:
         return jsonify({"error": f"Error recuperando OTA de almacenamiento: {str(e)}"}), 500
@@ -157,7 +244,7 @@ def app_actualizacion():
     id_app = request.args.get('app')
     if not id_app:
         return Response("error|Falta el parametro app", status=400, mimetype='text/plain')
-    
+
     nombre_limpio = id_app.strip().lower()
     nombre_con_guiones = nombre_limpio.replace(" ", "_")
 
@@ -165,43 +252,33 @@ def app_actualizacion():
         conexion = conectar_db()
         cursor = conexion.cursor()
         cursor.execute('''
-            SELECT version, url_descarga FROM aplicaciones 
+            SELECT version, url_descarga FROM aplicaciones
             WHERE LOWER(nombre) = %s OR LOWER(nombre) = %s
             ORDER BY fecha_subida DESC LIMIT 1
         ''', (nombre_limpio, nombre_con_guiones))
-        
+
         resultado = cursor.fetchone()
         cursor.close()
         conexion.close()
 
         if resultado:
             version_db = resultado[0]
-            url_db = resultado[1] if resultado[1] else "https://diamant-cloud.onrender.com/"
+            url_db = resultado[1] if resultado[1] else "[https://diamant-cloud.onrender.com/](https://diamant-cloud.onrender.com/)"
             return Response(f"{version_db}|{url_db}", mimetype='text/plain')
 
     except Exception as db_err:
         print(f"Error consultando la app en PostgreSQL: {db_err}")
 
-    # Diccionario de Respaldo
     ecosistema_apps = {
-        "bloc_notas": {
-            "version": "1.2.0",
-            "url": "https://diamant-cloud.onrender.com/downloads/bloc_notas.zip"
-        },
-        "calculadora": {
-            "version": "1.0.5",
-            "url": "https://diamant-cloud.onrender.com/downloads/calculadora.zip"
-        },
-        "diamant_store": {
-            "version": "2.0.1",
-            "url": "https://diamant-cloud.onrender.com/downloads/store.zip"
-        }
+        "bloc_notas": {"version": "1.2.0", "url": "[https://diamant-cloud.onrender.com/downloads/bloc_notas.zip](https://diamant-cloud.onrender.com/downloads/bloc_notas.zip)"},
+        "calculadora": {"version": "1.0.5", "url": "[https://diamant-cloud.onrender.com/downloads/calculadora.zip](https://diamant-cloud.onrender.com/downloads/calculadora.zip)"},
+        "diamant_store": {"version": "2.0.1", "url": "[https://diamant-cloud.onrender.com/downloads/store.zip](https://diamant-cloud.onrender.com/downloads/store.zip)"}
     }
-    
+
     app_info = ecosistema_apps.get(nombre_limpio) or ecosistema_apps.get(nombre_con_guiones)
     if app_info:
         return Response(f"{app_info['version']}|{app_info['url']}", mimetype='text/plain')
-    
+
     return Response("error|Aplicacion no registrada en el ecosistema Kernel ni en la Nube", status=404, mimetype='text/plain')
 
 
@@ -213,12 +290,8 @@ def app_actualizacion():
 def check_diamant_account():
     datos = request.json or {}
     cuenta = datos.get('cuenta', '').strip().lower()
-    
-    if not cuenta.endswith('@diamantaccount.com'):
-        username_limpio = cuenta
-    else:
-        username_limpio = cuenta.replace('@diamantaccount.com', '')
-        
+    username_limpio = cuenta.replace('@diamantaccount.com', '') if cuenta.endswith('@diamantaccount.com') else cuenta
+
     if not username_limpio:
         return jsonify({"status": "invalid", "message": "Nombre de cuenta vacío"}), 400
 
@@ -232,16 +305,15 @@ def check_diamant_account():
 
         if resultado:
             return jsonify({
-                "status": "exists", 
+                "status": "exists",
                 "cuenta_completa": f"{username_limpio}@diamantaccount.com",
                 "message": "La cuenta existe. Proceder al login."
             }), 200
-        else:
-            return jsonify({
-                "status": "not_found", 
-                "cuenta_completa": f"{username_limpio}@diamantaccount.com",
-                "message": "La cuenta no existe."
-            }), 200
+        return jsonify({
+            "status": "not_found",
+            "cuenta_completa": f"{username_limpio}@diamantaccount.com",
+            "message": "La cuenta no existe."
+        }), 200
     except Exception as e:
         return jsonify({"status": "error", "message": f"Fallo de conexión DB: {str(e)}"}), 500
 
@@ -251,7 +323,6 @@ def auth_diamant_account():
     datos = request.json or {}
     cuenta = datos.get('cuenta', '').strip().lower()
     password = datos.get('password', '')
-    
     username_limpio = cuenta.replace('@diamantaccount.com', '') if '@diamantaccount.com' in cuenta else cuenta
 
     try:
@@ -269,7 +340,7 @@ def auth_diamant_account():
                 "cuenta": f"{username_limpio}@diamantaccount.com",
                 "correo_respaldo": resultado[1] or "No asignado"
             }), 200
-            
+
         return jsonify({"auth": False, "message": "Credenciales incorrectas para Diamant Account"}), 401
     except Exception as e:
         return jsonify({"auth": False, "message": f"Fallo de conexión DB: {str(e)}"}), 500
@@ -281,7 +352,6 @@ def registrar_diamant_account():
     cuenta = datos.get('cuenta', '').strip().lower()
     password = datos.get('password', '')
     correo_respaldo = datos.get('correo_respaldo', '').strip()
-
     username_limpio = cuenta.replace('@diamantaccount.com', '') if '@diamantaccount.com' in cuenta else cuenta
 
     if not username_limpio or not password:
@@ -291,7 +361,7 @@ def registrar_diamant_account():
         conexion = conectar_db()
         cursor = conexion.cursor()
         password_encriptada = generate_password_hash(password)
-        cursor.execute('INSERT INTO usuarios (username, password, correo_recuperacion) VALUES (%s, %s, %s)', 
+        cursor.execute('INSERT INTO usuarios (username, password, correo_recuperacion) VALUES (%s, %s, %s)',
                        (username_limpio, password_encriptada, correo_respaldo))
         conexion.commit()
         cursor.close()
@@ -322,12 +392,12 @@ def panel_cuentas():
         conexion.close()
     except Exception as e:
         return f"<h3>Error al cargar panel: {str(e)}</h3>"
-    
+
     filas_tabla = ""
     for user in lista_usuarios:
         correo_rec = user[1] if user[1] else '<span style="color: #ecc94b;">⚠️ Sin correo asignado</span>'
         filas_tabla += f"<tr><td>👤 {user[0]}@diamantaccount.com</td><td>📧 {correo_rec}</td></tr>"
-        
+
     return f'''
     <!DOCTYPE html>
     <html>
@@ -355,6 +425,7 @@ def panel_cuentas():
     </body>
     </html>
     '''
+
 
 @app.route('/panel_update', methods=['GET'])
 def panel_update():
@@ -388,6 +459,7 @@ def panel_update():
     </html>
     '''
 
+
 @app.route('/subir_update', methods=['POST'])
 def subir_update():
     version = request.form.get('nueva_version')
@@ -403,7 +475,7 @@ def subir_update():
     try:
         contenido_zip = archivo.read()
         archivo_simulado = io.BytesIO(contenido_zip)
-        
+
         resultado_cloudinary = cloudinary.uploader.upload(
             archivo_simulado,
             folder="diamant_os_updates",
@@ -416,8 +488,8 @@ def subir_update():
         conexion = conectar_db()
         cursor = conexion.cursor()
         cursor.execute('''
-            UPDATE ota_version 
-            SET version = %s, url_zip = %s 
+            UPDATE ota_version
+            SET version = %s, url_zip = %s
             WHERE id = 1
         ''', (version.strip(), url_zip_persistente))
         conexion.commit()
@@ -435,13 +507,13 @@ def subir_update():
 
 
 # =====================================================================
-# 🛒 TIENDA PRINCIPAL Y FLUJO DE LOGUEO CORREGIDO
+# 🛒 DIAMANT SHOP: TIENDA, DETALLE DE APP CON PÁGINA Y DESCRIPCIÓN
 # =====================================================================
 
 @app.route('/', methods=['GET'])
 def pagina_web():
     try:
-        conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
+        conexion = conectar_db(usar_dict=True)
         cursor = conexion.cursor()
         cursor.execute('SELECT * FROM aplicaciones ORDER BY fecha_subida DESC')
         apps = cursor.fetchall()
@@ -450,25 +522,82 @@ def pagina_web():
     except Exception as e:
         apps = []
         print(f"Error cargando apps en página principal: {e}")
-        
+
     usuario_logueado = session.get('usuario')
     return render_template('tienda.html', aplicaciones=apps, usuario=usuario_logueado)
 
 
+@app.route('/app/<int:app_id>', methods=['GET'])
+def detalle_app_web(app_id):
+    """Página dedicada de cada app en Diamant Shop con descripción completa y enlace web"""
+    try:
+        conexion = conectar_db(usar_dict=True)
+        cursor = conexion.cursor()
+        cursor.execute('SELECT * FROM aplicaciones WHERE id = %s', (app_id,))
+        app_data = cursor.fetchone()
+        cursor.close()
+        conexion.close()
+    except Exception as e:
+        return f"<h3>Error cargando aplicación: {str(e)}</h3>", 500
+
+    if not app_data:
+        return "<h3>Aplicación no encontrada en Diamant Shop.</h3>", 404
+
+    descripcion = app_data['descripcion'] or "Sin descripción proporcionada por el desarrollador."
+    pagina_web_url = app_data['pagina_web'] or ""
+    boton_web = f'<a href="{pagina_web_url}" target="_blank" class="btn btn-web">🌐 Visitar Página Oficial</a>' if pagina_web_url else ''
+
+    return f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <title>{app_data['nombre']} - Diamant Shop</title>
+        <style>
+            body {{ font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 40px 20px; display: flex; justify-content: center; }}
+            .card {{ background: #1e293b; border-radius: 20px; padding: 35px; max-width: 680px; width: 100%; border: 1px solid #334155; box-shadow: 0 15px 35px rgba(0,0,0,0.4); }}
+            .badge {{ background: #2563eb; color: white; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold; }}
+            h1 {{ margin: 12px 0 6px 0; font-size: 28px; color: #38bdf8; }}
+            .meta {{ color: #94a3b8; font-size: 14px; margin-bottom: 24px; }}
+            .desc-box {{ background: #0f172a; padding: 20px; border-radius: 14px; line-height: 1.6; color: #e2e8f0; border: 1px solid #1e293b; white-space: pre-wrap; }}
+            .actions {{ display: flex; gap: 12px; margin-top: 28px; flex-wrap: wrap; }}
+            .btn {{ padding: 12px 20px; border-radius: 10px; text-decoration: none; font-weight: bold; font-size: 14px; }}
+            .btn-dl {{ background: #10b981; color: white; }}
+            .btn-web {{ background: #3b82f6; color: white; }}
+            .btn-back {{ background: #334155; color: #cbd5e1; }}
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <span class="badge">{app_data['categoria'] or 'General'}</span>
+            <h1>{app_data['nombre']} <span style="font-size:16px; color:#94a3b8;">v{app_data['version']}</span></h1>
+            <div class="meta">Desarrollado por <strong>@{app_data['autor']}</strong> • Publicado en Diamant Shop</div>
+            <h3>📝 Acerca de esta aplicación</h3>
+            <div class="desc-box">{descripcion}</div>
+            <div class="actions">
+                <a href="{app_data['url_descarga']}" class="btn btn-dl">⬇️ Descargar Código (.cs)</a>
+                {boton_web}
+                <a href="/" class="btn btn-back">← Volver a la Tienda</a>
+            </div>
+        </div>
+    </body>
+    </html>
+    '''
+
+
 @app.route('/login', methods=['POST'])
 def login():
-    """Ruta de autenticación corregida con strips seguros y control de flujo"""
     username = request.form.get('username', '').strip()
     password = request.form.get('password', '')
-    accion = request.form.get('accion') # 'login' o 'registro'
-    
+    accion = request.form.get('accion')
+
     if not username or not password:
         return '<script>alert("Campos vacíos."); window.history.back();</script>'
-        
+
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
-        
+
         if accion == "registro":
             try:
                 password_encriptada = generate_password_hash(password)
@@ -480,7 +609,6 @@ def login():
                 conexion.close()
                 return '<script>alert("El nombre de usuario ya existe."); window.history.back();</script>'
         else:
-            # Login por defecto (si accion == 'login' o si no viene el campo)
             cursor.execute('SELECT password FROM usuarios WHERE username = %s', (username,))
             resultado = cursor.fetchone()
             if resultado and check_password_hash(resultado[0], password):
@@ -489,13 +617,13 @@ def login():
                 cursor.close()
                 conexion.close()
                 return '<script>alert("Usuario o contraseña incorrectos."); window.history.back();</script>'
-                
+
         cursor.close()
         conexion.close()
     except Exception as e:
         print(f"Fallo de login en DB: {e}")
         return f'<script>alert("Error del servidor en DB: {str(e)}"); window.history.back();</script>'
-        
+
     return redirect(url_for('pagina_web'))
 
 
@@ -509,13 +637,17 @@ def logout():
 def subir_app():
     if 'usuario' not in session:
         return redirect(url_for('pagina_web'))
-        
+
     nombre = request.form.get('nombre')
     version = request.form.get('version')
-    descripcion = request.form.get('descripcion')
+    descripcion = request.form.get('descripcion', '').strip()
     categoria = request.form.get('categoria')
+    pagina_web_app = request.form.get('pagina_web', '').strip()
     codigo = request.form.get('codigo_fuente')
     autor = session['usuario']
+
+    if pagina_web_app and not pagina_web_app.startswith(('http://', 'https://')):
+        pagina_web_app = 'https://' + pagina_web_app
 
     prompt_ia = f"""
     Eres un compilador estricto de C# para Diamant OS. Tu única tarea es validar si el código tiene errores de sintaxis reales.
@@ -533,7 +665,7 @@ def subir_app():
 
     pasa_la_ia = False
     try:
-        url_api = "https://openrouter.ai/api/v1/chat/completions"
+        url_api = "[https://openrouter.ai/api/v1/chat/completions](https://openrouter.ai/api/v1/chat/completions)"
         encabezados = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
             "Content-Type": "application/json"
@@ -541,20 +673,20 @@ def subir_app():
         cuerpo_peticion = {
             "model": "google/gemini-2.5-flash",
             "messages": [{"role": "user", "content": prompt_ia}],
-            "response_format": { "type": "json_object" }
+            "response_format": {"type": "json_object"}
         }
-        
+
         respuesta = requests.post(url_api, headers=encabezados, json=cuerpo_peticion, timeout=12)
         if respuesta.status_code == 200:
             datos_ia = respuesta.json()
             contenido_respuesta = datos_ia['choices'][0]['message']['content'].strip()
-            
+
             if "```" in contenido_respuesta:
                 contenido_respuesta = contenido_respuesta.split("```")[1]
                 if contenido_respuesta.startswith("json"):
                     contenido_respuesta = contenido_respuesta[4:]
                 contenido_respuesta = contenido_respuesta.split("```")[0].strip()
-                
+
             resultado_revision = json.loads(contenido_respuesta)
             if resultado_revision.get("valido") == False:
                 error_formateado = resultado_revision.get("error_mensaje", "Error de sintaxis.").replace('"', '\\"').replace('\n', '\\n')
@@ -567,18 +699,18 @@ def subir_app():
             else:
                 pasa_la_ia = True
         else:
-            pasa_la_ia = True  
-            
+            pasa_la_ia = True
+
     except Exception as e:
         print(f"Excepción en la validación por IA: {e}")
-        pasa_la_ia = True  
+        pasa_la_ia = True
 
     if pasa_la_ia and nombre and version and codigo:
         url_descarga_final = ""
         try:
             nombre_archivo_cs = f"{nombre.lower().replace(' ', '_')}.cs"
             archivo_simulado = io.BytesIO(codigo.encode('utf-8'))
-            
+
             resultado = cloudinary.uploader.upload(
                 archivo_simulado,
                 folder="diamant_store_uploads",
@@ -594,9 +726,9 @@ def subir_app():
             conexion = conectar_db()
             cursor = conexion.cursor()
             cursor.execute('''
-                INSERT INTO aplicaciones (nombre, version, descripcion, categoria, codigo_fuente, autor, url_descarga)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            ''', (nombre, version, descripcion, categoria, codigo, autor, url_descarga_final))
+                INSERT INTO aplicaciones (nombre, version, descripcion, categoria, codigo_fuente, autor, url_descarga, pagina_web)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (nombre, version, descripcion, categoria, codigo, autor, url_descarga_final, pagina_web_app))
             conexion.commit()
             cursor.close()
             conexion.close()
@@ -616,35 +748,52 @@ def subir_app():
 def eliminar_app(app_id):
     if 'usuario' not in session:
         return redirect(url_for('pagina_web'))
-        
+
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
         cursor.execute('SELECT autor FROM aplicaciones WHERE id = %s', (app_id,))
         resultado = cursor.fetchone()
-        
+
         if resultado and resultado[0] == session['usuario']:
             cursor.execute('DELETE FROM aplicaciones WHERE id = %s', (app_id,))
             conexion.commit()
-            
+
         cursor.close()
         conexion.close()
     except Exception as e:
         print(f"Error al eliminar la app: {e}")
-        
+
     return redirect(url_for('pagina_web'))
 
 
 @app.route('/api/apps', methods=['GET'])
 def obtener_apps():
     try:
-        conexion = psycopg2.connect(DATABASE_URL, cursor_factory=DictCursor)
+        conexion = conectar_db(usar_dict=True)
         cursor = conexion.cursor()
-        cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, fecha_subida FROM aplicaciones ORDER BY fecha_subida DESC')
+        cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, pagina_web, fecha_subida FROM aplicaciones ORDER BY fecha_subida DESC')
         apps = [dict(fila) for fila in cursor.fetchall()]
         cursor.close()
         conexion.close()
         return jsonify(apps)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/api/apps/<int:app_id>', methods=['GET'])
+def obtener_detalle_app_api(app_id):
+    """Endpoint JSON para que StoreControl en C# muestre la ficha completa (descripción + página web)"""
+    try:
+        conexion = conectar_db(usar_dict=True)
+        cursor = conexion.cursor()
+        cursor.execute('SELECT id, nombre, version, descripcion, categoria, autor, url_descarga, pagina_web, fecha_subida FROM aplicaciones WHERE id = %s', (app_id,))
+        fila = cursor.fetchone()
+        cursor.close()
+        conexion.close()
+        if fila:
+            return jsonify(dict(fila))
+        return jsonify({"error": "App no encontrada"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
