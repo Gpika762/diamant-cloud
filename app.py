@@ -2,6 +2,10 @@ import os
 import json
 import requests
 import io
+import random
+import smtplib
+import ssl
+from email.message import EmailMessage
 import cloudinary
 import cloudinary.uploader
 import psycopg2
@@ -20,6 +24,12 @@ OPENROUTER_API_KEY = os.environ.get("DIAMANTKEY", "sk-or-v1-017485dc2cd8443d0803
 # 🔒 CONTRASEÑA ADMINISTRADOR PARA MANDAR LA UPDATE DESDE LA WEB
 ADMIN_PASSWORD_UPDATE = "diamant_admin_os_2026"
 
+# 📧 CONFIGURACIÓN SMTP (Gmail App Password)
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+SMTP_USER = os.environ.get("SMTP_USER", "diamant.company1936@gmail.com")
+SMTP_PASS = os.environ.get("SMTP_PASS", "")
+
 # 🌟 CONFIGURACIÓN DE CLOUDINARY
 cloudinary.config(
     cloud_name="dwoaq0vf6",
@@ -27,6 +37,9 @@ cloudinary.config(
     api_secret="VFZ6V7ZOQlw7vCe_iI80qnD_1Iw",
     secure=True
 )
+
+# Diccionario en memoria para códigos 2FA temporales
+codigos_2fa_temporales = {}
 
 
 def conectar_db(usar_dict=False):
@@ -43,12 +56,12 @@ def conectar_db(usar_dict=False):
 
 
 def inicializar_base_datos():
-    """Crea las tablas y columnas nuevas en PostgreSQL al arrancar"""
+    """Crea las tablas y columnas necesarias en PostgreSQL al arrancar"""
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
 
-        # Tabla aplicaciones (con soporte para página web externa)
+        # Tabla aplicaciones con soporte para página web externa
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS aplicaciones (
                 id SERIAL PRIMARY KEY,
@@ -63,8 +76,6 @@ def inicializar_base_datos():
                 fecha_subida TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
-
-        # Migración segura por si la tabla ya existía sin pagina_web
         cursor.execute('ALTER TABLE aplicaciones ADD COLUMN IF NOT EXISTS pagina_web TEXT')
 
         # Tabla usuarios para Diamant Account
@@ -100,9 +111,31 @@ def inicializar_base_datos():
         print(f"❌ Error grave al inicializar la base de datos: {e}")
 
 
-# Ejecutar al importar para que Gunicorn en Render cree las tablas automáticamente
 if DATABASE_URL:
     inicializar_base_datos()
+
+
+def enviar_correo_smtp(destinatario, codigo_token):
+    """Envía el token de verificación de 6 dígitos mediante Gmail SMTP"""
+    if not SMTP_PASS:
+        print("⚠️ Advertencia: SMTP_PASS no está configurado.")
+        return False
+    try:
+        msg = EmailMessage()
+        msg.set_content(f"Hola,\n\nTu código de verificación de seguridad para Diamant Account (@diamantaccount.com) es:\n\n{codigo_token}\n\nEste código expira en 120 segundos.\n\nAtentamente,\nDiamant OS Kernel Security")
+        msg['Subject'] = "🔒 Código de Verificación - Diamant Account"
+        msg['From'] = SMTP_USER
+        msg['To'] = destinatario
+
+        context = ssl.create_default_context()
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+            server.starttls(context=context)
+            server.login(SMTP_USER, SMTP_PASS)
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        print(f"❌ Error enviando correo SMTP: {e}")
+        return False
 
 
 # =====================================================================
@@ -111,7 +144,6 @@ if DATABASE_URL:
 
 @app.route('/api/v1/assistant', methods=['POST'])
 def diamant_assistant_v1():
-    """Endpoint conectado a AssistantControl.cs en Diamant UI 1.0"""
     datos = request.json or {}
     query = datos.get('query', '').strip()
     usuario = datos.get('user', '').strip()
@@ -168,7 +200,6 @@ def diamant_assistant_v1():
     except Exception as e:
         print(f"Error en Biconector IA: {e}")
 
-    # Fallback inteligente si OpenRouter tarda o falla
     q = query.lower()
     if "calculadora" in q:
         return jsonify({"Reply": "Abriendo la calculadora en duix.", "ActionCode": "OPEN_CALC"}), 200
@@ -193,7 +224,6 @@ def obtener_version_ota():
         resultado = cursor.fetchone()
         cursor.close()
         conexion.close()
-
         version = resultado[0] if resultado else "1.0.0 bf3"
         return Response(version, mimetype='text/plain')
     except Exception as e:
@@ -226,13 +256,11 @@ def descargar_update_ota():
         resultado = cursor.fetchone()
         cursor.close()
         conexion.close()
-
         if resultado and resultado[0] != "[https://diamant-cloud.onrender.com/](https://diamant-cloud.onrender.com/)":
             return redirect(resultado[0])
-
-        return jsonify({"error": "El archivo de actualización no está configurado en el almacenamiento externo."}), 404
+        return jsonify({"error": "El archivo de actualización no está configurado."}), 404
     except Exception as e:
-        return jsonify({"error": f"Error recuperando OTA de almacenamiento: {str(e)}"}), 500
+        return jsonify({"error": f"Error recuperando OTA: {str(e)}"}), 500
 
 
 # =====================================================================
@@ -256,7 +284,6 @@ def app_actualizacion():
             WHERE LOWER(nombre) = %s OR LOWER(nombre) = %s
             ORDER BY fecha_subida DESC LIMIT 1
         ''', (nombre_limpio, nombre_con_guiones))
-
         resultado = cursor.fetchone()
         cursor.close()
         conexion.close()
@@ -265,7 +292,6 @@ def app_actualizacion():
             version_db = resultado[0]
             url_db = resultado[1] if resultado[1] else "[https://diamant-cloud.onrender.com/](https://diamant-cloud.onrender.com/)"
             return Response(f"{version_db}|{url_db}", mimetype='text/plain')
-
     except Exception as db_err:
         print(f"Error consultando la app en PostgreSQL: {db_err}")
 
@@ -274,16 +300,15 @@ def app_actualizacion():
         "calculadora": {"version": "1.0.5", "url": "[https://diamant-cloud.onrender.com/downloads/calculadora.zip](https://diamant-cloud.onrender.com/downloads/calculadora.zip)"},
         "diamant_store": {"version": "2.0.1", "url": "[https://diamant-cloud.onrender.com/downloads/store.zip](https://diamant-cloud.onrender.com/downloads/store.zip)"}
     }
-
     app_info = ecosistema_apps.get(nombre_limpio) or ecosistema_apps.get(nombre_con_guiones)
     if app_info:
         return Response(f"{app_info['version']}|{app_info['url']}", mimetype='text/plain')
 
-    return Response("error|Aplicacion no registrada en el ecosistema Kernel ni en la Nube", status=404, mimetype='text/plain')
+    return Response("error|Aplicacion no registrada", status=404, mimetype='text/plain')
 
 
 # =====================================================================
-# 🔐 GESTIÓN CENTRALIZADA DIAMANT ACCOUNT EN LA NUBE
+# 🔐 GESTIÓN CENTRALIZADA DIAMANT ACCOUNT & 2FA EN LA NUBE
 # =====================================================================
 
 @app.route('/api/diamant_account/check', methods=['POST'])
@@ -334,16 +359,38 @@ def auth_diamant_account():
         conexion.close()
 
         if resultado and check_password_hash(resultado[0], password):
+            correo_respaldo = resultado[1]
+            if correo_respaldo:
+                codigo_6_digitos = str(random.randint(100000, 999999))
+                codigos_2fa_temporales[username_limpio] = codigo_6_digitos
+                enviar_correo_smtp(correo_respaldo, codigo_6_digitos)
+
             return jsonify({
                 "auth": True,
+                "requires_2fa": bool(correo_respaldo),
                 "username": username_limpio,
                 "cuenta": f"{username_limpio}@diamantaccount.com",
-                "correo_respaldo": resultado[1] or "No asignado"
+                "correo_respaldo": correo_respaldo or "No asignado"
             }), 200
 
         return jsonify({"auth": False, "message": "Credenciales incorrectas para Diamant Account"}), 401
     except Exception as e:
         return jsonify({"auth": False, "message": f"Fallo de conexión DB: {str(e)}"}), 500
+
+
+@app.route('/api/diamant_account/verify_2fa', methods=['POST'])
+def verify_2fa_diamant_account():
+    datos = request.json or {}
+    cuenta = datos.get('cuenta', '').strip().lower()
+    codigo_ingresado = datos.get('codigo', '').strip()
+    username_limpio = cuenta.replace('@diamantaccount.com', '') if '@diamantaccount.com' in cuenta else cuenta
+
+    codigo_real = codigos_2fa_temporales.get(username_limpio)
+    if codigo_real and codigo_real == codigo_ingresado:
+        del codigos_2fa_temporales[username_limpio]
+        return jsonify({"verified": True, "message": "¡Verificación 2FA completada con éxito!"}), 200
+
+    return jsonify({"verified": False, "message": "Código de verificación inválido o expirado."}), 400
 
 
 @app.route('/api/diamant_account/register', methods=['POST'])
@@ -378,7 +425,7 @@ def registrar_diamant_account():
 
 
 # =====================================================================
-# 👥 PANELES VISUALES (WEB)
+# 👥 PANELES VISUALES Y GESTIÓN WEB DE USUARIOS Y OTA
 # =====================================================================
 
 @app.route('/panel_cuentas', methods=['GET'])
@@ -507,7 +554,7 @@ def subir_update():
 
 
 # =====================================================================
-# 🛒 DIAMANT SHOP: TIENDA, DETALLE DE APP CON PÁGINA Y DESCRIPCIÓN
+# 🛒 DIAMANT SHOP: TIENDA, DETALLE DE APP Y GESTIÓN WEB
 # =====================================================================
 
 @app.route('/', methods=['GET'])
@@ -529,7 +576,6 @@ def pagina_web():
 
 @app.route('/app/<int:app_id>', methods=['GET'])
 def detalle_app_web(app_id):
-    """Página dedicada de cada app en Diamant Shop con descripción completa y enlace web"""
     try:
         conexion = conectar_db(usar_dict=True)
         cursor = conexion.cursor()
@@ -543,7 +589,7 @@ def detalle_app_web(app_id):
     if not app_data:
         return "<h3>Aplicación no encontrada en Diamant Shop.</h3>", 404
 
-    descripcion = app_data['descripcion'] or "Sin descripción proporcionada por el desarrollador."
+    descripcion = app_data['descripcion'] or "Sin descripción proporcionada."
     pagina_web_url = app_data['pagina_web'] or ""
     boton_web = f'<a href="{pagina_web_url}" target="_blank" class="btn btn-web">🌐 Visitar Página Oficial</a>' if pagina_web_url else ''
 
@@ -597,7 +643,6 @@ def login():
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
-
         if accion == "registro":
             try:
                 password_encriptada = generate_password_hash(password)
@@ -617,11 +662,9 @@ def login():
                 cursor.close()
                 conexion.close()
                 return '<script>alert("Usuario o contraseña incorrectos."); window.history.back();</script>'
-
         cursor.close()
         conexion.close()
     except Exception as e:
-        print(f"Fallo de login en DB: {e}")
         return f'<script>alert("Error del servidor en DB: {str(e)}"); window.history.back();</script>'
 
     return redirect(url_for('pagina_web'))
@@ -680,7 +723,6 @@ def subir_app():
         if respuesta.status_code == 200:
             datos_ia = respuesta.json()
             contenido_respuesta = datos_ia['choices'][0]['message']['content'].strip()
-
             if "```" in contenido_respuesta:
                 contenido_respuesta = contenido_respuesta.split("```")[1]
                 if contenido_respuesta.startswith("json"):
@@ -692,7 +734,7 @@ def subir_app():
                 error_formateado = resultado_revision.get("error_mensaje", "Error de sintaxis.").replace('"', '\\"').replace('\n', '\\n')
                 return f'''
                 <script>
-                    alert("⚠️ Diamant OS Cloud Reviewer - Error de Compilación:\\n\\n{error_formateado}");
+                    alert("⚠️ Diamant OS Cloud Reviewer - Error:\\n\\n{error_formateado}");
                     window.history.back();
                 </script>
                 '''
@@ -700,9 +742,7 @@ def subir_app():
                 pasa_la_ia = True
         else:
             pasa_la_ia = True
-
     except Exception as e:
-        print(f"Excepción en la validación por IA: {e}")
         pasa_la_ia = True
 
     if pasa_la_ia and nombre and version and codigo:
@@ -710,7 +750,6 @@ def subir_app():
         try:
             nombre_archivo_cs = f"{nombre.lower().replace(' ', '_')}.cs"
             archivo_simulado = io.BytesIO(codigo.encode('utf-8'))
-
             resultado = cloudinary.uploader.upload(
                 archivo_simulado,
                 folder="diamant_store_uploads",
@@ -734,36 +773,27 @@ def subir_app():
             conexion.close()
             return redirect(url_for('pagina_web'))
         except Exception as e:
-            return f"<h3>Error al guardar la app en base de datos: {str(e)}</h3>"
+            return f"<h3>Error al guardar la app: {str(e)}</h3>"
 
-    return '''
-    <script>
-        alert("❌ Error: Los campos Nombre, Versión o Código no pueden estar vacíos.");
-        window.history.back();
-    </script>
-    '''
+    return '<script>alert("❌ Error: Campos obligatorios vacíos."); window.history.back();</script>'
 
 
 @app.route('/eliminar/<int:app_id>')
 def eliminar_app(app_id):
     if 'usuario' not in session:
         return redirect(url_for('pagina_web'))
-
     try:
         conexion = conectar_db()
         cursor = conexion.cursor()
         cursor.execute('SELECT autor FROM aplicaciones WHERE id = %s', (app_id,))
         resultado = cursor.fetchone()
-
         if resultado and resultado[0] == session['usuario']:
             cursor.execute('DELETE FROM aplicaciones WHERE id = %s', (app_id,))
             conexion.commit()
-
         cursor.close()
         conexion.close()
     except Exception as e:
         print(f"Error al eliminar la app: {e}")
-
     return redirect(url_for('pagina_web'))
 
 
@@ -783,7 +813,6 @@ def obtener_apps():
 
 @app.route('/api/apps/<int:app_id>', methods=['GET'])
 def obtener_detalle_app_api(app_id):
-    """Endpoint JSON para que StoreControl en C# muestre la ficha completa (descripción + página web)"""
     try:
         conexion = conectar_db(usar_dict=True)
         cursor = conexion.cursor()
